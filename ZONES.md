@@ -13,11 +13,12 @@ Plus le joueur s'éloigne du lobby, plus la zone est hostile — c'est l'axe de
 progression du jeu.
 
 ```
-Lobby → pont → Verte → Lave → Glace → Pierre → Désert (autel du boss)
+Lobby → porte monumentale → Verte → Lave → Glace → Pierre → Désert (arène du boss)
 ```
 
-Le lobby est une île séparée (spawns, portails vers chaque zone, classement,
-boutique…) : voir `MAPS.md`, qui décrit toute la map et son import dans Roblox.
+Vue de dessus, la map est un **T** : le lobby (avec les bases) est la barre,
+le couloir des zones est la tige. Voir `MAPS.md`, qui décrit toute la map et
+son import dans Roblox.
 
 **Les plots restent en herbe verte dans tous les biomes.** C'est délibéré : un
 joueur doit reconnaître une base d'un coup d'œil. Seuls le sol du couloir, les
@@ -112,10 +113,10 @@ couleur, quoi que fasse l'importateur des meshes multi-matières.
 
 ## 3. Les 5 zones
 
-Chaque bande couvre toute la largeur de l'île (430 studs) sur une longueur de
-**148 studs** (une cellule de 2 bases), sauf la première (208 studs, elle
-absorbe la place d'entrée côté pont), la quatrième (160, elle va jusqu'au
-désert) et le désert (203 studs).
+Chaque zone est un tronçon du couloir de **160 studs** de long (`zone_len`),
+112 de large entre deux murs de 30 de haut ; le désert fait 260 studs
+(`arena_len`) et se termine par l'arène circulaire du boss. Les bases ne sont
+plus dans les zones : elles sont dans le lobby.
 
 | # | Zone | Sol | Murs | Liseré | Décor |
 |---|---|---|---|---|---|
@@ -131,16 +132,17 @@ progression lisible de loin, y compris en vue aérienne.
 
 Chaque zone a aussi :
 
-- un **portique** au-dessus de la rue, à son entrée, avec son nom en 3D et une
-  ligne lumineuse au sol dans sa couleur (la zone Verte a l'arche d'entrée) ;
+- un **portique** au-dessus du couloir, à son entrée, avec son nom en 3D et une
+  ligne lumineuse au sol dans sa couleur (la zone Verte a la porte monumentale
+  du lobby) ;
 - un **repère géant** dans les marges derrière les bases : arbre géant et étang
   (Verte), deux volcans (Lave), château de glace et cristaux (Glace), arche
   rocheuse et éboulis (Pierre), deux pyramides à gradins (Désert) ;
 - un décor de bord de rue de plus en plus dense (16 → 28 props) : la richesse
   croît avec la progression.
 
-Les marges derrière les bases sont du **décor pur** : des barrières invisibles
-empêchent d'y entrer. Le désert, lui, se parcourt librement.
+Les bandes derrière les murs du couloir sont du **décor pur** : les murs de
+30 studs les ferment, et des barrières invisibles bordent l'île.
 
 ---
 
@@ -157,7 +159,7 @@ MapData.zones               -- 5 entrées, contiguës, sans trou
 --   capsuleArea = { min = Vector3, max = Vector3 } }  -- voie libre pour les capsules
 
 MapData.GetZoneAt(position)  -- zone contenant une position (nil hors de l'île)
-MapData.GetAreaAt(position)  -- idem, mais renvoie MapData.lobby sur le lobby et le pont
+MapData.GetAreaAt(position)  -- idem, mais renvoie MapData.lobby sur le lobby
 MapData.GetZoneById("lava")
 ```
 
@@ -185,7 +187,7 @@ toujours vrai.
    seul (au-delà de 6 portails, élargis `lobby_size`).
 2. Si le décor est d'un type nouveau, ajoute un `add_*` et branche-le dans
    `add_biome_decor()`.
-3. Garde `CONFIG["plots_per_side"] == len(BIOMES) - 1` : chaque zone sauf le
-   désert (toujours en dernier) occupe une cellule de 2 bases.
+3. Le couloir s'allonge tout seul (`zone_len` par zone) ; le désert reste en
+   dernier avec l'arène.
 4. Relance le script et vérifie la ligne `MESH_BUDGET` : la limite Roblox est de
    **10 000 triangles par MeshPart**.

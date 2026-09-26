@@ -84,9 +84,10 @@ dimensions en studs, matériau Roblox, couleur hex.
 
 ## Exemple réel : la map Kaiju Heist
 
-Spec effectivement extraite des screenshots de référence du projet, puis
-implémentée dans `KaijuHeist/blender/build_map.py`. Les dimensions ci-dessous
-sont celles du `CONFIG` du script — c'est la source de vérité.
+Spec extraite des screenshots de référence au début du projet (historique :
+la map actuelle suit depuis un plan en T dessiné par l'utilisateur, voir
+`MAPS.md`). Les dimensions ci-dessous étaient celles du `CONFIG` de
+l'époque ; la source de vérité reste le script.
 
 ```
 ### MAP
@@ -98,7 +99,7 @@ sont celles du `CONFIG` du script — c'est la source de vérité.
 ### ZONES
 | # | Nom | Position | Dimensions | Contenu |
 |---|---|---|---|---|
-| 1 | Lobby (île séparée) + pont | extrémité -X | 220 × 220, pont 70 × 32 | fontaine, spawns, portails, classement, boutique (ajouté après la spec, voir `MAPS.md`) |
+| 1 | Plaza de spawn | extrémité -X | 140 × 140 | fontaine, arche, podium de classement |
 | 2 | Rue centrale | axe médian | ~590 × 72 | herbe damier, lampadaires, déco de bord |
 | 3 | Plots joueurs | 4 de chaque côté de la rue | 132 × 122 chacun | enclos, stands, machine |
 | 4 | Murs séparateurs | entre plots | 16 × 122 × 40 | terre damier, sommet herbeux |

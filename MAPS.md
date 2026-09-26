@@ -9,33 +9,42 @@
 
 ## 1. Ce que contient la map
 
-Ordre de marche, d'ouest en est :
+La map suit le plan dessiné (`KaijuHeist/assets/map/plan_reference.png`) : un
+**T** vu de dessus. La barre du T est le **lobby**, la tige est le **couloir des
+zones**.
 
 ```
-LOBBY ──pont──► Zone Verte ► Zone de Lave ► Zone de Glace ► Zone de Pierre ► Zone Désert
- (spawn)         2 bases      2 bases        2 bases         2 bases          arène du boss
+ +-----------+
+ | B3 |      |
+ | B1 |      +------------------------------------------------------+
+ |    | LOBBY  Zone 1 | Zone 2 | Zone 3 | Zone 4 | Zone 5 ( arène )
+ | B2 |      +------------------------------------------------------+
+ | B4 |      |
+ +-----------+
 ```
 
 ![Vue aérienne](KaijuHeist/assets/map/preview_aerial.png)
 
-| Section | Taille | Contenu |
+| Section | Taille (studs) | Contenu |
 |---|---|---|
-| **Lobby** | île de 220 × 220 | fontaine + **8 points de spawn**, **6 portails** (MA BASE, VERTE, LAVE, GLACE, PIERRE, BOSS), tableau CLASSEMENT + podium 1-2-3, vitrine des **5 raretés**, stand BOUTIQUE, coffre CADEAU, panneau COMMENT JOUER, arche KAIJU HEIST |
-| **Pont** | 70 × 32 | relie le lobby à l'île principale, garde-corps solides |
-| **Zone 1 — Verte** | 208 studs de long | place d'entrée (arche « ZONE VERTE », portail retour LOBBY) + 2 bases |
-| **Zone 2 — Lave** | 148 | portique « ZONE DE LAVE », obsidienne, fissures de lave, volcans + 2 bases |
-| **Zone 3 — Glace** | 148 | portique, pics de glace, château de glace, cristaux + 2 bases |
-| **Zone 4 — Pierre** | 160 | portique, stalagmites, arche rocheuse, éboulis + 2 bases |
-| **Zone 5 — Désert** | 203 | portique, cactus, 2 pyramides à gradins (escaladables), **autel du boss**, portail retour LOBBY |
-| **Bases (« cases »)** | 132 × 122 chacune | 8 bases identiques N1…N4 / S1…S4 : 6 enclos avec portillon et socle, maison, VENDRE, BOUTIQUE, machine à éclore, tapis roulant, ligne ZONE SÛRE |
+| **Lobby** | 440 × 660 | place de marbre traversée par deux avenues ; au centre, **statue géante d'un kaiju** (~100 studs) sur un piédestal à 3 étages dans un bassin à jets lumineux, entourée d'une colonnade et de cristaux flottants ; **8 points de spawn** autour du bassin ; galerie de **6 portails** (MA BASE, VERTE, LAVE, GLACE, PIERRE, BOSS) avec bannières ; vitrine de **5 œufs géants** (raretés) ; **CLASSEMENT** géant + podium 1-2-3 ; **CADEAU DU JOUR** ; panneau **COMMENT JOUER** ; 4 tours d'angle ; braseros, lampadaires, jardins |
+| **Boutiques** | 34 × 18 chacune | à l'entrée du couloir comme sur le plan : **BOUTIQUE / VENTE** (côté nord, capsules en vitrine) et **VITESSE** (côté sud, bottes lumineuses) |
+| **Porte monumentale** | 166 de large, 70 de haut | deux tours surmontées de têtes de kaiju, fronton « KAIJU HEIST », panneau « ZONE VERTE » |
+| **Bases (« enclos »)** | 132 × 122 chacune | **4 bases** identiques B1…B4 alignées sur le côté ouest du lobby, séparées par des murs de marbre ; chacune : 6 enclos avec portillon et socle, maison, VENDRE, BOUTIQUE, machine à éclore, tapis roulant, ligne ZONE SÛRE |
+| **Zones 1 à 4** | 160 × 112 chacune | couloir fermé par deux murs de 30 aux couleurs de la zone, portique avec le nom de la zone, lampadaires, décor de plus en plus dense, repères géants derrière les murs (arbre géant, volcans, château de glace, arche rocheuse) |
+| **Zone 5 — Désert** | 260 | fin du couloir puis **arène circulaire du boss** (rayon 88) : mur en anneau, gradins, autel à piliers et rayon violet, portail retour LOBBY ; pyramides derrière les murs |
 
-Les 8 bases sont **strictement identiques** (même modèle instancié) : aucun
-joueur n'a une meilleure base qu'un autre. Elles restent en herbe verte dans
-toutes les zones pour être reconnaissables d'un coup d'œil.
+Les bases sont **strictement identiques** (même modèle instancié) : aucun
+joueur n'a une meilleure base qu'un autre. Pour en avoir plus, change
+`base_count` dans `CONFIG` : la colonne et le lobby s'allongent tout seuls.
 
-| Lobby | Rue (zone Verte → Lave → Glace) |
+| Lobby | Statue |
 |---|---|
-| ![Lobby](KaijuHeist/assets/map/preview_lobby.png) | ![Rue](KaijuHeist/assets/map/preview_street.png) |
+| ![Lobby](KaijuHeist/assets/map/preview_lobby.png) | ![Statue](KaijuHeist/assets/map/preview_statue.png) |
+
+| Couloir (zone Verte → Lave → Glace…) |
+|---|
+| ![Couloir](KaijuHeist/assets/map/preview_street.png) |
 
 | Une base | Arène du boss |
 |---|---|
@@ -63,10 +72,10 @@ marche avec l'interface en français.
 |---|---|
 | `assets/map/kaiju_heist_map.glb` | **la map entière, à importer dans Roblox** |
 | `assets/map/kaiju_heist_map.blend` | la même scène, pour la regarder dans Blender |
-| `assets/map/sections/*.glb` | la même map découpée : `Lobby`, `Island`, `Zone1_Verte`… `Zone5_Desert`, `Plots` |
-| `assets/map/preview_*.png` | 5 rendus : aerial, lobby, street, plot, boss |
+| `assets/map/sections/*.glb` | la même map découpée : `Lobby`, `Island` (dessous du couloir), `Zone1_Verte`… `Zone5_Desert`, `Plots` |
+| `assets/map/preview_*.png` | 6 rendus : aerial, lobby, statue, street, plot, boss |
 | `src/Shared/MapData.lua` | positions pour le gameplay (spawns, portails, zones, bases, couleurs) |
-| `src/Server/MapColliders.lua` | les 642 volumes de collision invisibles |
+| `src/Server/MapColliders.lua` | les 501 volumes de collision invisibles |
 
 Tous ces fichiers sont **générés** : ne les modifie jamais à la main, relance le
 script.
@@ -76,12 +85,12 @@ script.
 À chaque exécution, il mesure sa propre sortie et affiche :
 
 ```
-MESH_BUDGET total=87320 objects=303 unique_meshes=133 max=1440 (...)
-COLLIDERS total=642 {'ground': 17, 'solid': 611, 'barrier': 14}
-CHECKS passed=373 failed=0
+MESH_BUDGET total=86656 objects=217 unique_meshes=145 max=4148 (...)
+COLLIDERS total=501 {'ground': 11, 'solid': 482, 'barrier': 8}
+CHECKS passed=274 failed=0
 ```
 
-Les 373 contrôles : zones contiguës, chaque spawn posé sur un sol et libre de
+Les 274 contrôles : zones contiguës, chaque spawn posé sur un sol et libre de
 tout mur, chaque portail atteignable, chaque zone de capsules dans sa zone et
 libre de tout obstacle, chaque base dans la bonne zone, chaque objet sous
 10 000 triangles avec **une seule** matière et un nom au bon format. Une ligne
@@ -107,12 +116,13 @@ libre de tout obstacle, chaque base dans la bonne zone, chaque objet sous
    atterrit** : `MapService` le recale tout seul (voir §4).
 4. **Enregistre la place.** Rojo ne gère pas `Workspace` : la map vit dans le
    fichier de la place, pas dans le dépôt.
-5. Paramètres du jeu → nombre de joueurs max = **8** (une base par joueur).
+5. Paramètres du jeu → nombre de joueurs max = **4** (une base par joueur ;
+   à ajuster si tu changes `base_count`).
 6. *Play*. Dans la fenêtre Output, tu dois voir :
 
 ```
 MapService: aligned Workspace.<nom du modèle> (moved ... studs, scale x1.000, residual 0.000)
-MapService: 1 map model(s), 642 colliders, 8 spawns, 8 portals
+MapService: 1 map model(s), 501 colliders, 8 spawns, 7 portals
 ```
 
 Variante : importer les `sections/*.glb` une par une au lieu de la map entière
@@ -131,7 +141,7 @@ script Blender et `MapService` sont écrits l'un pour l'autre :
 | Problème | Côté Blender | Côté Roblox (`src/Server/MapService.lua`) |
 |---|---|---|
 | Couleurs et matières | **1 matière par objet**, nom `<Nom>__<clé>` (ex. `Zone2_Lave__lava_glow`) | lit la clé, applique couleur + matière Roblox depuis `MapData.materials` (**Neon** pour tout ce qui brille) |
-| Collisions | liste chaque mur, sol, prop solide → `MapColliders.lua` | crée 642 parts invisibles exactes ; les meshes deviennent de purs visuels (groupe de collision `MapVisual`) mais la caméra les évite toujours |
+| Collisions | liste chaque mur, sol, prop solide → `MapColliders.lua` | crée 501 parts invisibles exactes ; les meshes deviennent de purs visuels (groupe de collision `MapVisual`) mais la caméra les évite toujours |
 | Position à l'import | 3 repères `REF_Origin`, `REF_AxisX`, `REF_AxisY` enfouis sous l'île | mesure les repères, corrige échelle, rotation et position, puis rend les repères invisibles |
 | Spawn | 8 pads autour de la fontaine → `MapData.lobby.spawns` | 8 `SpawnLocation` invisibles, orientées vers les portails |
 | Portails | déclencheurs → `MapData.portals` | téléporte au contact : zone → début de la zone, MA BASE → sa base, LOBBY → un spawn du lobby |
@@ -139,8 +149,8 @@ script Blender et `MapService` sont écrits l'un pour l'autre :
 
 Autres services branchés sur la map :
 
-- **`PlotService`** attribue une base à chaque joueur (dans l'ordre N1, S1, N2,
-  S2… : les premières bases sont les plus proches du lobby), affiche
+- **`PlotService`** attribue une base à chaque joueur (dans l'ordre B1, B2, B3,
+  B4 : les premières sont les plus proches de l'avenue centrale), affiche
   « Base de *Pseudo* » au-dessus de la machine, libère la base au départ.
   Attribut joueur `PlotId`.
 - **`CapsuleService`** fait apparaître les capsules dans la voie de course de
@@ -158,7 +168,8 @@ Tout se règle en haut de `build_map.py` :
 
 | Tu veux… | Modifie |
 |---|---|
-| changer une taille (rue, bases, murs, lobby, pont) | `CONFIG` |
+| changer une taille (couloir, zones, bases, murs, place, statue) | `CONFIG` |
+| changer le nombre de bases | `CONFIG["base_count"]` |
 | changer une zone (sol, murs, couleur de lueur, quantité de décor) | son entrée dans `BIOMES` |
 | changer une couleur ou une matière Roblox | `PALETTE` (clé `rbx` pour la matière Roblox) |
 | ajouter un prop | une fonction `add_*` ; `solid=True` pour qu'il bloque les joueurs |
@@ -167,8 +178,8 @@ Puis : relance le script → supprime l'ancienne map dans Studio → réimporte 
 GLB. `MapData.lua` et `MapColliders.lua` suivent automatiquement (Rojo les
 synchronise).
 
-⚠️ `plots_per_side` doit rester égal à `len(BIOMES) - 1` : chaque zone sauf le
-désert contient une cellule de 2 bases.
+Ajouter une zone = ajouter une entrée à `BIOMES` : le couloir s'allonge, le
+lobby lui crée un portail (la galerie s'élargit).
 
 ---
 
@@ -176,17 +187,17 @@ désert contient une cellule de 2 bases.
 
 Vérifié par mesure, sur Blender 5.0.1 (module `bpy`) :
 
-- génération complète sans erreur, **373/373 contrôles** passés ;
-- GLB réimporté dans une scène vide : 303 pièces, 133 meshes (les 8 bases
-  partagent les leurs), **aucune** pièce multi-matière, 2,3 Mo ;
+- génération complète sans erreur, **274/274 contrôles** passés ;
+- GLB réimporté dans une scène vide : 217 pièces, 145 meshes (les 4 bases
+  partagent les leurs), **aucune** pièce multi-matière, 3,6 Mo ;
 - les 3 repères tombent **exactement** sur les coordonnées de `MapData.reference` ;
-  le portail MA BASE et les machines des bases N1 et S3 tombent sur leurs
+  le portail MA BASE et les machines des bases B1 et B4 tombent sur leurs
   ancres `MapData` ;
 - les 16 fichiers Luau compilent (compilateur Luau réel) ;
 - `MapData.lua` et `MapColliders.lua` exécutés dans une VM Luau avec des tests :
   chaque nom du GLB trouve sa couleur, chaque spawn est dans la bonne zone,
   chaque portail a une destination, zones contiguës ; `PlotService` testé
-  (8 bases attribuées dans l'ordre, 9e joueur sans base, libération et
+  (4 bases attribuées dans l'ordre, 5e joueur sans base, libération et
   réattribution).
 
 **Pas vérifié** : l'exécution dans Roblox Studio lui-même (pas de Studio dans
@@ -205,6 +216,9 @@ script rend avec EEVEE.
 - **Vol physique** : `ProximityPrompt` sur `plot.house` au lieu de la liste
   d'UI (`MapData.plots[i].house` est prêt).
 - Afficher les kaijus sur les socles des enclos (`MapData.plots[i].pens`).
+- Brancher les deux boutiques : `MapData.lobby.shop` et `MapData.lobby.speedShop`
+  (position + orientation du comptoir). La boutique VITESSE attend un achat de
+  vitesse de déplacement côté serveur.
 - Brancher un vrai classement sur `MapData.lobby.leaderboard` (position,
   taille, orientation de l'écran fournies).
 - `StreamingEnabled` à activer dans Studio (propriété de `Workspace`).

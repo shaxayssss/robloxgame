@@ -56,8 +56,8 @@ Code et commentaires en **anglais**.
 
 Les systemes serveur existent et **sont relies a la map** : `MapService`
 (recalage du GLB, collisions, spawns, portails), `PlotService` (une base par
-joueur), `CapsuleService` (capsules dans les zones). La map (lobby + 5 zones +
-8 bases + arene) est generee par `blender/build_map.py`. Guide : `MAPS.md`.
+joueur), `CapsuleService` (capsules dans les zones). La map en T (lobby + 4
+bases + 5 zones + arene) est generee par `blender/build_map.py`. Guide : `MAPS.md`.
 
 Prochaines taches, dans cet ordre :
 

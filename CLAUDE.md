@@ -115,7 +115,7 @@ rend mal : skills `map-reference-analysis` puis `higgsfield-3d-assets`.
 
 - Échelle : 1 stud = 1 unité Blender.
 - **Limite dure : 10 000 triangles par MeshPart.** Le script découpe tout seul
-  au-delà de 9 500 (la map actuelle : 303 objets, 87 320 tris, max 1 440 par
+  au-delà de 9 500 (la map actuelle : 217 objets, 86 656 tris, max 4 148 par
   objet).
 - Textures PBR ≤ 1024×1024, couleurs fidèles à la référence.
 - Import Studio : onglet Avatar → **3D Importer** → sélectionner le `.glb`.
@@ -130,7 +130,7 @@ rend mal : skills `map-reference-analysis` puis `higgsfield-3d-assets`.
   **voler** l'Ichor des autres joueurs.
 - **Plateformes** : PC + Mobile + Console. Session cible ~15 min.
 - **Monétisation** : _(à définir — pas encore commencée)_
-- **Statut** : prototype. La map (lobby + 5 zones + 8 bases + arène) est
+- **Statut** : prototype. La map en T (lobby + 4 bases + 5 zones + arène) est
   générée et **reliée aux services** : spawn au lobby, portails, attribution des
   bases, capsules dans les zones. Pas encore testée dans Studio (voir `MAPS.md` §6).
 
@@ -147,21 +147,25 @@ rend mal : skills `map-reference-analysis` puis `higgsfield-3d-assets`.
 | Données partagées | `src/Shared/Constants.lua`, `KaijuDatabase.lua`, `Remotes.lua` | Équilibrage centralisé |
 | HUD | `src/Client/Main.client.lua` | Généré en code, fonctionnel mais brut |
 | Bandeau de zone | `src/Client/ZoneBanner.lua` | Nom de la zone à l'entrée |
-| Map | `blender/build_map.py` → `assets/map/` | Lobby + 5 zones + 8 bases + arène, GLB prêt à importer |
+| Map | `blender/build_map.py` → `assets/map/` | Plan en T : lobby + 4 bases + 5 zones + arène, GLB prêt à importer |
 | Ancres de map | `src/Shared/MapData.lua` (généré) | Consommé par les services ci-dessous |
-| Collisions de map | `src/Server/MapColliders.lua` (généré) | 642 volumes invisibles |
+| Collisions de map | `src/Server/MapColliders.lua` (généré) | 501 volumes invisibles |
 | Mise en jeu de la map | `src/Server/MapService.lua` | Recalage, couleurs, collisions, spawns, portails |
 | Bases | `src/Server/PlotService.lua` | 1 base par joueur, étiquette du propriétaire |
 
 ### La map en chiffres
 
-**Lobby** (île de 220 × 220 : spawns, 6 portails, classement, vitrine des
-raretés, boutique, cadeau, tutoriel) relié par un **pont** de 70 studs à l'**île
-principale** de ~**867 × 430 studs**. Rue centrale de 72 studs de large, bordée
-de **8 bases** (4 par côté) de 132 × 122 studs, séparées par des murs de 16
-d'épaisseur et 40 de haut ; autel de boss au bout. Par base : 6 enclos, maison,
-stand VENDRE, stand BOUTIQUE, machine à éclore, tapis roulant, ligne
-« ZONE SÛRE ». Les 8 bases sont identiques (un seul modèle instancié).
+Plan en **T** dessiné par l'utilisateur (`assets/map/plan_reference.png`).
+La barre : un **lobby** de 440 × 660 studs (statue géante d'un kaiju au centre
+d'un bassin, colonnade, 8 spawns, galerie de 6 portails, classement, 5 œufs de
+rareté, cadeau du jour, tutoriel, 4 tours), avec **4 bases** (B1…B4, 132 × 122,
+murs de marbre) alignées sur son côté ouest et **deux boutiques** (BOUTIQUE /
+VENTE et VITESSE) à l'entrée du couloir. La tige : une **porte monumentale**
+puis un **couloir** de 112 de large et 900 de long, découpé en 5 zones, qui
+finit sur l'**arène circulaire du boss**. Par base : 6 enclos, maison, stand
+VENDRE, stand BOUTIQUE, machine à éclore, tapis roulant, ligne « ZONE SÛRE ».
+Les bases sont identiques (un seul modèle instancié ; `base_count` dans
+`CONFIG`).
 
 Le couloir traverse **5 biomes** — Verte → Lave → Glace → Pierre → Désert —
 définis dans la liste `BIOMES` de `build_map.py` et détaillés dans `ZONES.md`.
@@ -169,7 +173,7 @@ Ils sont exposés au gameplay par `MapData.zones` / `MapData.GetZoneAt()` /
 `MapData.GetAreaAt()` (lobby compris), où `index` croît avec la distance au
 lobby et sert de palier de difficulté. Chaque zone a son `spawn` (destination
 de portail) et sa `capsuleArea`.
-Les plots restent en herbe verte dans tous les biomes, pour rester lisibles.
+Les bases restent en herbe verte, pour rester lisibles.
 
 ### Prochaine étape (la vraie priorité)
 

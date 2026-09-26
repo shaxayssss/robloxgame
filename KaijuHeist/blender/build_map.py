@@ -4,13 +4,15 @@ Kaiju Heist - full world generator (Blender 5.x).
     blender -b --python build_map.py
     (or open this file in Blender's Text Editor and press Run Script)
 
-Builds the whole playable world, in walking order:
+Builds the whole playable world as a T seen from above:
 
-    Lobby island -> bridge -> Zone Verte -> Zone de Lave -> Zone de Glace
-    -> Zone de Pierre -> Zone Desert (boss arena)
-
-with the 8 player bases ("cases", plots N1..N4 / S1..S4) along the central
-street, two per zone. Everything is driven by CONFIG / BIOMES / PALETTE below:
+    - the bar of the T is a huge lobby: marble plaza around a giant kaiju
+      statue, the player bases ("enclos", B1..B4) along its west side, portals,
+      leaderboard, rarity showcase, daily reward, tutorial, and two shops
+      (BOUTIQUE / VENTE and VITESSE) at the corridor mouth;
+    - the stem is the corridor of zones running east through a monumental gate:
+      Zone Verte -> Zone de Lave -> Zone de Glace -> Zone de Pierre ->
+      Zone Desert, which ends in a circular boss arena. Everything is driven by CONFIG / BIOMES / PALETTE below:
 change a value, re-run, done. Never hand-edit an output, it is overwritten.
 
 Outputs:
@@ -48,33 +50,32 @@ import re
 # ---------------------------------------------------------------- CONFIG
 
 CONFIG = {
-    "street_half": 36.0,      # half-width of the central street (Y)
-    "plot_width": 132.0,      # plot width along the street (X)
-    "plot_depth": 122.0,      # plot depth (Y, measured from the street edge)
-    "wall_thickness": 16.0,   # walls separating plots
+    # T-shaped world: the lobby is the bar of the T (north-south), the corridor
+    # of zones is the stem, running east from the middle of the lobby.
+    "base_count": 4,          # player bases ("enclos") along the lobby's west side
+    "plot_width": 132.0,      # base width along the lobby edge (Y)
+    "plot_depth": 122.0,      # base depth (X, measured from the plaza edge)
+    "wall_thickness": 16.0,   # walls separating bases
     "wall_height": 40.0,
-    "plots_per_side": 4,      # one plot cell per zone, so len(BIOMES) - 1
+    "plaza_len": 302.0,       # grand plaza depth between the bases and the corridor
+    "lobby_margin": 26.0,     # lobby width beyond the base column, at each end
+    "corridor_half": 56.0,    # half-width of the walkable corridor
+    "corridor_wall_height": 30.0,
+    "corridor_margin": 60.0,  # scenery strip behind each corridor wall
+    "zone_len": 160.0,        # length of each corridor zone
+    "arena_len": 260.0,       # last zone: corridor end + circular boss arena
     "tile": 11.0,             # checker tile size for grounds and walls
-    "island_margin_y": 57.0,  # scenery margin beyond the plot rows
-    "entry_len": 60.0,        # entrance square between the bridge and the plots
-    "desert_len": 215.0,      # desert + boss arena depth (+X end)
     "dirt_depth": 60.0,       # dirt body thickness under the ground
     "taper_depth": 90.0,      # tapered island tip below the dirt
-    "lobby_size": 220.0,      # square lobby island
-    "lobby_gap": 70.0,        # bridge length between lobby and main island
-    "bridge_half": 16.0,
+    "statue_scale": 1.25,     # the kaiju statue in the middle of the lobby
     "barrier_height": 40.0,   # invisible walls around the islands
     "seed": 7,
 }
 
 MAX_TRIS_PER_PART = 9500      # Roblox refuses a MeshPart above 10 000 triangles
 
-# Corridor zones, in walking order from the lobby. Zone i (i < plots_per_side)
-# covers plot cell i, so it holds 2 bases; the last one is the desert and its
-# boss arena. See ZONES.md.
-#
-# Plot floors deliberately stay grass in every zone: a player must recognise a
-# base at a glance, and re-tinting them would make the map unreadable.
+# Corridor zones, in walking order from the lobby; the last one ends in the
+# boss arena. Add an entry to lengthen the corridor. See ZONES.md.
 BIOMES = [
     {"id": "green", "name": "Verte", "label": "Zone Verte", "sign": "ZONE VERTE",
      "portal": "VERTE", "floor": ("grass_a", "grass_b"), "wall": ("dirt", "dirt_dark"),
@@ -97,7 +98,7 @@ BIOMES = [
     {"id": "desert", "name": "Desert", "label": "Zone Desert", "sign": "ZONE DESERT",
      "portal": "BOSS", "floor": ("sand", "sand_dark"), "wall": ("sand_dark", "dirt"),
      "cap": "sand", "rim": "sand", "glow": "glow_gold", "ground": "Sand",
-     "decor": "desert", "street_props": 0, "margin_props": 0},
+     "decor": "desert", "street_props": 10, "margin_props": 10},
 ]
 
 # Rarity showcase in the lobby, same order and colours as KaijuDatabase.lua.
@@ -198,6 +199,8 @@ PALETTE = {
     "marble_dark": _mat(0.76, 0.74, 0.70, roughness=0.4, rbx="Marble"),
     "gold": _mat(1.00, 0.80, 0.25, roughness=0.3, metallic=0.8, rbx="Metal"),
     "board": _mat(0.13, 0.15, 0.22),
+    "statue": _mat(0.30, 0.34, 0.40, roughness=0.6),
+    "statue_dark": _mat(0.17, 0.19, 0.24, roughness=0.6),
     "rarity_common": _mat255(150, 150, 150, emission=1.0),
     "rarity_rare": _mat255(70, 140, 255, emission=1.2),
     "rarity_epic": _mat255(170, 70, 255, emission=1.3),
@@ -795,54 +798,62 @@ def barrier(section, x0, y0, x1, y1, thickness=2.0):
 
 
 def layout():
-    """Coordinates derived from CONFIG, shared by every builder."""
+    """Coordinates derived from CONFIG, shared by every builder.
+
+    Top view (X east, Y north):
+
+        +----------+
+        | bases |  |
+        |  B3   |  |
+        |  B1   |  +----------------------------------------------+
+        |       |P |  Zone 1 | Zone 2 | Zone 3 | Zone 4 | Zone 5 ( arena )
+        |  B2   |  +----------------------------------------------+
+        |  B4   |  |
+        +----------+
+          lobby      corridor of zones, from x = 0 eastwards
+    """
     c = CONFIG
     cell = c["plot_width"] + c["wall_thickness"]
-    n = c["plots_per_side"]
-    row_span = cell * n
-    row_x0 = -row_span / 2.0
-    row_x1 = row_x0 + row_span
-    plot_y_far = c["street_half"] + c["plot_depth"]
-    island_x_min = row_x0 - c["entry_len"]
-    island_x_max = row_x1 + c["desert_len"]
-    lobby_x1 = island_x_min - c["lobby_gap"]
-    desert_x0 = row_x1 + 12.0
+    n = c["base_count"]
+    t = c["wall_thickness"]
+    col_span = n * cell + t
+    street_x = -c["plaza_len"]
+    back_x = street_x - c["plot_depth"]
+    ch = c["corridor_half"]
+    corridor_len = (len(BIOMES) - 1) * c["zone_len"] + c["arena_len"]
+    arena_r = 88.0
+    arena_x = corridor_len - 100.0
+    wall_y = ch + 4.0
     return {
         "cell": cell,
-        "plot_centers": [row_x0 + i * cell + c["wall_thickness"] + c["plot_width"] / 2.0
-                         for i in range(n)],
-        "wall_centers": [row_x0 + i * cell + c["wall_thickness"] / 2.0 for i in range(n + 1)],
-        "row_x0": row_x0,
-        "row_x1": row_x1,
-        "plot_y_far": plot_y_far,
-        "back_wall_y": plot_y_far + 3.0,
-        "island_y": plot_y_far + c["island_margin_y"],
-        "island_x_min": island_x_min,
-        "island_x_max": island_x_max,
-        "desert_x0": desert_x0,
-        "arena_x": (desert_x0 + island_x_max - 12.0) / 2.0,
-        "lobby_x0": lobby_x1 - c["lobby_size"],
-        "lobby_x1": lobby_x1,
-        "lobby_cx": lobby_x1 - c["lobby_size"] / 2.0,
-        "lobby_half": c["lobby_size"] / 2.0,
+        "col_span": col_span,
+        "base_centers": [-col_span / 2.0 + t + c["plot_width"] / 2.0 + k * cell for k in range(n)],
+        "wall_centers": [-col_span / 2.0 + t / 2.0 + k * cell for k in range(n + 1)],
+        "street_x": street_x,              # plaza edge the bases open onto
+        "back_x": back_x,                  # back of the bases
+        "lobby_x0": back_x - 16.0,
+        "lobby_x1": 0.0,
+        "lobby_half": col_span / 2.0 + c["lobby_margin"],
+        "plaza_cx": street_x / 2.0,
+        "corridor_len": corridor_len,
+        "corridor_half": ch,
+        "corridor_wall_y": wall_y,         # centre line of the corridor walls
+        "island_y": wall_y + 4.0 + c["corridor_margin"],
+        "arena_x": arena_x,
+        "arena_r": arena_r,
+        # Where the straight corridor walls meet the arena ring.
+        "ring_x": arena_x - math.sqrt(arena_r ** 2 - wall_y ** 2),
     }
 
 
 def biome_segments(L):
-    """Corridor split into [x0, x1, biome] bands, covering the whole island.
-
-    The entrance square is folded into the first band and the last cell runs up
-    to the desert, so the bands are contiguous: no unpainted strip on the ground
-    and no position on the island where GetZoneAt would return nil.
-    """
-    n = CONFIG["plots_per_side"]
+    """Corridor split into contiguous [x0, x1, biome] zones, from the lobby east."""
     segments = []
-    start = L["island_x_min"]
-    for i in range(n):
-        end = L["row_x0"] + (i + 1) * L["cell"] if i < n - 1 else L["desert_x0"]
-        segments.append((start, end, BIOMES[min(i, len(BIOMES) - 2)]))
-        start = end
-    segments.append((start, L["island_x_max"], BIOMES[-1]))
+    x = 0.0
+    for i, biome in enumerate(BIOMES):
+        end = x + CONFIG["zone_len"] if i < len(BIOMES) - 1 else L["corridor_len"]
+        segments.append((x, end, biome))
+        x = end
     return segments
 
 
@@ -852,10 +863,10 @@ def section_name(index, biome):
 
 def capsule_area(L, index, x0, x1):
     """Rectangle (Blender XY) where world capsules may spawn in a zone: the
-    running lane of the street, or the open sand in front of the boss arena."""
-    lane = CONFIG["street_half"] - 16.0
+    middle lane of the corridor, clear of lamps and props."""
+    lane = CONFIG["corridor_half"] - 24.0
     if index == len(BIOMES):
-        return (L["desert_x0"] + 12.0, -30.0, L["arena_x"] - 48.0, 30.0)
+        return (x0 + 20.0, -lane, L["ring_x"] - 12.0, lane)
     return (x0 + 20.0, -lane, x1 - 20.0, lane)
 
 
@@ -1138,15 +1149,6 @@ def add_portal(mb, pal, f, glow):
     return trigger, f.p(0, -1.75, 23.1)
 
 
-def add_zone_gate(mb, pal, biome, gx):
-    """Lintel across the street between two plot walls, plus a glowing border."""
-    sh = CONFIG["street_half"]
-    mb.box((gx, 0.0, 33.0), (12.0, 2 * sh + 16.0, 6.0), pal[biome["wall"][1]])
-    mb.box((gx, 0.0, 36.4), (12.6, 2 * sh + 17.0, 0.8), pal[biome["cap"]])
-    mb.box((gx, 0.0, 29.6), (4.0, 2 * sh, 0.8), pal[biome["glow"]])
-    mb.box((gx, 0.0, 0.08), (1.6, 2 * sh, 0.16), pal[biome["glow"]])
-
-
 def add_step_pyramid(mb, pal, x, y, base, tiers, tier_h, solid):
     s = base
     for i in range(tiers):
@@ -1220,6 +1222,150 @@ def add_landmark(mb, pal, biome, x, y, rng):
             for _ in range(4):
                 mb.cylinder((x + rng.uniform(-8, 8), y + rng.uniform(-8, 8), 3.0), 1.4, 6.0,
                             pal["cave_crystal"], segments=5, taper=0.2)
+    elif kind == "desert":
+        add_step_pyramid(mb, pal, x, y, 42.0 if north else 32.0, 5 if north else 4, 6.0, solid=False)
+
+
+# ---------------------------------------------------------------- MONUMENTS
+
+
+def add_kaiju_statue(mb, pal, f, z0, k=1.0):
+    """The giant kaiju the lobby is built around: blocky, dark stone, gold claws,
+    glowing eyes and dorsal spikes. Faces the frame's front; tail behind."""
+    body, dark, gold = pal["statue"], pal["statue_dark"], pal["gold"]
+
+    def part(lx, ly, z, sx, sy, sz, mat):
+        mb.box(f.p(lx * k, ly * k, z0 + z * k), (sx * k, sy * k, sz * k), mat, rot_z=f.r)
+
+    for side in (-1, 1):
+        part(side * 6.5, -1.0, 1.5, 9, 12, 3, dark)                 # foot
+        for toe in (-3.0, 0.0, 3.0):
+            part(side * 6.5 + toe, -7.5, 1.2, 2, 2, 2.4, gold)      # toe claws
+        part(side * 6.5, 1.0, 9.0, 7.5, 8.5, 12, body)              # shin
+        part(side * 7.0, 2.0, 17.0, 9, 11, 8, body)                 # thigh
+    part(0, 2.0, 22.0, 18, 15, 8, body)                             # hips
+    part(0, 0.5, 31.0, 17, 14, 12, body)                            # belly
+    part(0, -6.8, 30.0, 11, 1.0, 14, dark)                          # belly plates
+    for z in (25.0, 29.0, 33.0):
+        part(0, -7.5, z, 9, 0.6, 0.8, gold)
+    part(0, -1.0, 41.0, 15, 13, 10, body)                           # chest
+    for side in (-1, 1):
+        part(side * 9.5, -3.0, 38.0, 4.5, 6, 5, body)               # upper arm
+        part(side * 10.0, -7.0, 34.5, 4, 6, 4, body)                # forearm
+        for claw in (-1.2, 0.0, 1.2):
+            part(side * 10.0 + claw, -10.5, 33.5, 0.9, 2, 0.9, gold)
+    part(0, -3.0, 48.5, 10, 10, 6, body)                            # neck
+    part(0, -8.0, 54.0, 13, 15, 9, body)                            # skull
+    part(0, -13.0, 49.8, 11, 9, 3, dark)                            # lower jaw
+    for tooth in (-4.0, -2.0, 0.0, 2.0, 4.0):
+        part(tooth, -16.5, 51.8, 1.0, 0.8, 1.6, pal["white"])
+    part(0, -15.2, 55.5, 11, 3, 3, body)                            # snout
+    for side in (-1, 1):
+        part(side * 4.2, -15.6, 57.6, 2.6, 1.0, 1.4, pal["lava_glow"])   # eyes
+        part(side * 5.0, -4.0, 60.5, 2.2, 2.2, 5.0, dark)                # horns
+        part(side * 5.6, -5.5, 63.5, 1.6, 1.6, 3.0, gold)
+    for ly, z, h in ((0.0, 60.0, 6.0), (4.0, 50.0, 8.0), (6.0, 42.0, 9.0),
+                     (7.0, 34.0, 8.0), (8.0, 26.0, 6.0)):
+        mb.cylinder(f.p(0, ly * k, z0 + (z + h / 2.0) * k), 2.2 * k, h * k, pal["glow_cyan"],
+                    segments=5, taper=0.1)
+    for ly, z, s in ((12.0, 22.0, 11.0), (19.0, 17.0, 9.0), (26.0, 12.0, 7.5),
+                     (32.0, 8.0, 6.0), (37.0, 5.0, 4.5), (41.0, 3.5, 3.0)):
+        part(0, ly, z, s, 7.5, s * 0.8, body)                       # tail
+        mb.cylinder(f.p(0, ly * k, z0 + (z + s * 0.4 + 1.2) * k), 1.1 * k, 2.4 * k,
+                    pal["glow_cyan"], segments=5, taper=0.1)
+    # One box keeps players out of the legs and body.
+    mb.collider("box", f.p(0, 1.0 * k, z0 + 27.0 * k), (20.0 * k, 18.0 * k, 54.0 * k), f.r)
+
+
+def add_kaiju_head(mb, pal, f, z0, k=1.0):
+    """Gargoyle head for the gate towers."""
+    def part(lx, ly, z, sx, sy, sz, mat):
+        mb.box(f.p(lx * k, ly * k, z0 + z * k), (sx * k, sy * k, sz * k), mat, rot_z=f.r)
+    part(0, 0, 4.0, 12, 13, 8, pal["statue"])
+    part(0, -6.5, 1.5, 10, 6, 3, pal["statue_dark"])
+    part(0, -8.0, 5.0, 10, 3, 3, pal["statue"])
+    for side in (-1, 1):
+        part(side * 3.6, -8.2, 6.8, 2.4, 0.8, 1.2, pal["lava_glow"])
+        part(side * 4.5, 2.0, 10.0, 2.0, 2.0, 5.0, pal["statue_dark"])
+        part(side * 5.0, 1.0, 13.0, 1.4, 1.4, 2.4, pal["gold"])
+    for tooth in (-3.0, -1.0, 1.0, 3.0):
+        part(tooth, -9.4, 2.9, 0.9, 0.8, 1.4, pal["white"])
+
+
+def add_tower(mb, pal, x, y, radius=10.0, height=46.0, banner=None):
+    """Round corner tower: marble shaft, gold band, crenellations, cone roof."""
+    mb.cylinder((x, y, height / 2.0), radius, height, pal["marble"], segments=10, solid=True)
+    mb.cylinder((x, y, 2.0), radius + 1.2, 4.0, pal["marble_dark"], segments=10)
+    mb.cylinder((x, y, height * 0.6), radius + 0.4, 1.4, pal["gold"], segments=10)
+    for i in range(10):
+        a = 2 * math.pi * i / 10
+        mb.box((x + math.cos(a) * (radius - 0.6), y + math.sin(a) * (radius - 0.6), height + 1.6),
+               (3.0, 2.2, 3.2), pal["marble_dark"], rot_z=a + math.pi / 2)
+    mb.cylinder((x, y, height + 8.0), radius + 1.0, 14.0, pal["roof"], segments=10, taper=0.05)
+    mb.sphere((x, y, height + 16.5), 1.8, pal["glow_gold"], rings=4, segments=8)
+    for i in range(4):   # slit windows
+        a = math.pi / 4 + i * math.pi / 2
+        mb.box((x + math.cos(a) * radius, y + math.sin(a) * radius, height * 0.78),
+               (1.6, 1.6, 5.0), pal["glow_gold"], rot_z=a)
+    if banner:
+        a = math.atan2(-y, -x) if (x or y) else 0.0
+        bx, by = x + math.cos(a) * (radius + 0.6), y + math.sin(a) * (radius + 0.6)
+        mb.box((bx, by, height * 0.36), (5.0, 0.6, 14.0), pal[banner], rot_z=a + math.pi / 2)
+        mb.box((bx, by, height * 0.36 + 7.4), (6.0, 0.9, 0.9), pal["gold"], rot_z=a + math.pi / 2)
+
+
+def add_brazier(mb, pal, x, y):
+    mb.cylinder((x, y, 1.0), 3.0, 2.0, pal["marble_dark"], segments=8, solid=True)
+    mb.cylinder((x, y, 4.0), 1.0, 4.0, pal["stone_dark"], segments=6)
+    mb.cylinder((x, y, 6.6), 2.8, 1.4, pal["gold"], segments=8, taper=1.2)
+    mb.cylinder((x, y, 8.6), 2.0, 3.0, pal["lava_glow"], segments=6, taper=0.2)
+    mb.cylinder((x, y, 10.0), 1.0, 3.0, pal["glow_gold"], segments=5, taper=0.1)
+
+
+def add_planter_tree(mb, pal, x, y, rng):
+    mb.box((x, y, 0.9), (7.0, 7.0, 1.8), pal["marble_dark"], solid=True)
+    mb.box((x, y, 1.9), (6.0, 6.0, 0.3), pal["dirt_dark"])
+    add_tree(mb, pal, x, y, rng, solid=True)
+
+
+def add_floating_crystal(mb, pal, x, y, z, size, mat):
+    mb.frustum((x, y), z + size * 1.6, z, (0.3, 0.3), (size, size), mat)
+    mb.frustum((x, y), z, z - size * 1.2, (size, size), (0.3, 0.3), mat)
+
+
+def add_shop(mb, pal, f, stripe, display):
+    """Shop building facing the frame's front: shop body, gable roof, counter,
+    striped awning, roof sign and wares on the counter.
+    Returns (main sign text position, awning text position)."""
+    mb.box(f.p(0, 6.0, 9.0), (34.0, 16.0, 18.0), pal["house"], rot_z=f.r, solid=True)
+    mb.roof(f.p(0, 6.0, 21.5), (37.0, 19.0, 7.0), pal["roof"], rot_z=f.r)
+    for lx in (-17.2, 17.2):
+        mb.box(f.p(lx, 6.0, 9.0), (1.4, 16.4, 18.0), pal["wood"], rot_z=f.r)
+    mb.box(f.p(0, -2.2, 8.0), (10.0, 0.6, 12.0), pal["board"], rot_z=f.r)        # door way
+    mb.box(f.p(0, -6.0, 2.6), (28.0, 5.0, 5.2), pal["wood"], rot_z=f.r, solid=True)
+    mb.box(f.p(0, -6.0, 5.5), (29.0, 6.0, 0.6), pal["wood_light"], rot_z=f.r)
+    for lx in (-15.5, 15.5):
+        mb.box(f.p(lx, -10.0, 7.0), (1.2, 1.2, 14.0), pal["wood_light"], rot_z=f.r)
+    n = 8
+    for i in range(n):
+        lx = -17.0 + 34.0 / n * (i + 0.5)
+        mb.box(f.p(lx, -6.0, 14.2), (34.0 / n, 10.0, 1.2),
+               stripe if i % 2 == 0 else pal["white"], rot_z=f.r)
+    mb.box(f.p(0, -11.2, 12.6), (35.0, 0.8, 3.6), stripe, rot_z=f.r)            # awning board
+    mb.box(f.p(0, -3.0, 27.0), (30.0, 1.0, 7.0), pal["board"], rot_z=f.r)       # roof sign
+    mb.box(f.p(0, -2.6, 27.0), (31.6, 0.8, 8.6), pal["gold"], rot_z=f.r)
+    for lx in (-8.0, 0.0, 8.0):
+        if display == "capsules":
+            mb.cylinder(f.p(lx, -6.0, 6.3), 1.4, 1.0, pal["metal_mid"], segments=8)
+            mb.sphere(f.p(lx, -6.0, 8.2), 1.5, pal[("rarity_rare", "rarity_epic", "rarity_legendary")
+                                                     [int(lx / 8.0) + 1]])
+        else:   # speed: glowing boots and bolts
+            mb.box(f.p(lx - 1.0, -6.0, 6.8), (1.6, 3.2, 2.0), pal["glow_cyan"], rot_z=f.r)
+            mb.box(f.p(lx + 1.0, -6.0, 6.8), (1.6, 3.2, 2.0), pal["glow_cyan"], rot_z=f.r)
+            mb.box(f.p(lx, -6.0, 9.4), (0.8, 0.8, 3.0), pal["glow_gold"], rot_z=f.r + 0.5)
+    for lx in (-20.0, 20.0):
+        add_lamp(mb, pal, *f.p(lx, -12.0)[:2], glow=pal["glow_gold"])
+    return f.p(0, -3.8, 27.0), f.p(0, -11.9, 12.6)
 
 
 # ---------------------------------------------------------------- SECTIONS
@@ -1236,205 +1382,302 @@ def build_texts(pal):
     add("zone_sure", "ZONE SURE", "text_decal", 8.5, 0.4)
     add("vendre", "VENDRE", "text_decal", 3.1, 0.25)
     add("boutique", "BOUTIQUE", "text_decal", 3.1, 0.25)
-    add("title", "KAIJU HEIST", "glow_gold", 6.0, 0.6)
-    add("classement", "CLASSEMENT", "glow_gold", 3.4, 0.3)
-    add("rarities", "RARETES", "text_decal", 2.2, 0.2)
-    add("cadeau", "CADEAU", "glow_gold", 2.6, 0.3)
-    add("tuto_title", "COMMENT JOUER", "glow_gold", 2.4, 0.2)
+    add("title", "KAIJU HEIST", "glow_gold", 9.0, 0.8)
+    add("classement", "CLASSEMENT", "glow_gold", 5.0, 0.4)
+    add("rarities", "RARETES", "glow_gold", 3.6, 0.3)
+    add("cadeau", "CADEAU DU JOUR", "glow_gold", 3.0, 0.3)
+    add("tuto_title", "COMMENT JOUER", "glow_gold", 2.8, 0.25)
     for i, line in enumerate(("1  RAMASSE DES CAPSULES", "2  FAIS-LES ECLORE",
                               "3  GAGNE DE L'ICHOR", "4  VOLE LES AUTRES"), start=1):
-        add("tuto_%d" % i, line, "text_decal", 1.7, 0.15)
+        add("tuto_%d" % i, line, "text_decal", 2.0, 0.15)
+    for i in (1, 2, 3):
+        add("place_%d" % i, str(i), "glow_gold", 5.0, 0.3)
+    add("shop_title", "BOUTIQUE", "glow_gold", 4.4, 0.4)
+    add("shop_sub", "VENTE", "text_decal", 2.4, 0.2)
+    add("speed_title", "VITESSE", "glow_cyan", 4.4, 0.4)
+    add("speed_sub", "BOUTIQUE", "text_decal", 2.4, 0.2)
     add("portal_base", "MA BASE", "text_decal", 2.4, 0.2)
     add("portal_lobby", "LOBBY", "text_decal", 2.4, 0.2)
     for b in BIOMES:
         add("portal_" + b["id"], b["portal"], "text_decal", 2.4, 0.2)
-        add("gate_" + b["id"], b["sign"], "text_decal", 6.0 if b is BIOMES[0] else 4.2, 0.4)
+        add("gate_" + b["id"], b["sign"], "text_decal", 4.2, 0.4)
     return t
 
 
 def build_lobby(world, pal, L, texts):
-    """Spawn island: fountain + spawn ring, portals, leaderboard, rarity
-    showcase, shop, daily reward, tutorial, and the bridge to the main island."""
+    """The bar of the T: a huge marble plaza around a giant kaiju statue, with
+    the player bases on its west side, portals, leaderboard, rarity showcase,
+    daily reward, tutorial, two shops and the monumental gate of the corridor."""
     sec = world.section("Lobby")
     mb = MeshBuilder()
     rng = random.Random(CONFIG["seed"] + 300)
-    cx, half = L["lobby_cx"], L["lobby_half"]
-    x0, x1, y0, y1 = cx - half, cx + half, -half, half
-    rim = 8.0
-    bh = CONFIG["bridge_half"]
-    plaza = half - 35.0   # marble plaza half-size; grows with lobby_size
+    x0, x1, H = L["lobby_x0"], L["lobby_x1"], L["lobby_half"]
+    sx, pcx = L["street_x"], L["plaza_cx"]
+    ch, wy = L["corridor_half"], L["corridor_wall_y"]
+    rim = 10.0
+    edge = H - rim
 
-    add_floating_body(mb, pal, x0, y0, x1, y1, 40.0, 60.0, rng, rocks=10)
-    mb.checker(x0 + rim, y0 + rim, x1 - rim, y1 - rim, 0.0, CONFIG["tile"],
-               pal["grass_a"], pal["grass_b"])
-    add_rims(mb, pal["grass_rim"], x0, y0, x1, y1, rim)
-    mb.collider("box", (cx, 0.0, -2.0), (x1 - x0, y1 - y0, 4.0), kind="ground", material="Grass")
+    # Island, grass, rims (no east rim: the corridor island continues there).
+    add_floating_body(mb, pal, x0, -H, x1, H, 70.0, 110.0, rng, rocks=24)
+    mb.checker(x0 + rim, -edge, x1, edge, 0.0, CONFIG["tile"], pal["grass_a"], pal["grass_b"])
+    add_rims(mb, pal["grass_rim"], x0, -H, x1, H, rim, east=False)
+    mb.collider("box", ((x0 + x1) / 2.0, 0.0, -2.0), (x1 - x0, 2 * H, 4.0), kind="ground",
+                material="Grass")
 
-    # Marble plaza with a gold trim, and the path to the bridge gate.
-    mb.checker(cx - plaza, -plaza, cx + plaza, plaza, 0.05, 10.0, pal["marble"], pal["marble_dark"])
-    mb.collider("box", (cx, 0.0, -0.45), (2 * plaza, 2 * plaza, 1.0), kind="ground",
+    # Marble plaza with gold borders, crossed by two stone avenues.
+    px0, px1, py = sx + 6.0, x1 - 6.0, edge - 6.0
+    mb.checker(px0, -py, px1, py, 0.05, 12.0, pal["marble"], pal["marble_dark"])
+    mb.collider("box", ((px0 + px1) / 2.0, 0.0, -0.45), (px1 - px0, 2 * py, 1.0), kind="ground",
                 material="Marble")
-    for sy in (-1, 1):
-        mb.box((cx, sy * (plaza + 0.8), 0.2), (2 * plaza + 3.2, 1.6, 0.4), pal["gold"])
-        # The east trim leaves a gap where the path heads for the bridge.
-        mb.box((cx + plaza + 0.8, sy * (plaza + bh) / 2.0, 0.2), (1.6, plaza - bh, 0.4), pal["gold"])
-    mb.box((cx - plaza - 0.8, 0.0, 0.2), (1.6, 2 * plaza, 0.4), pal["gold"])
-    mb.checker(cx + plaza, -bh, x1, bh, 0.05, 8.0, pal["stone"], pal["stone_dark"])
-    mb.collider("box", ((cx + plaza + x1) / 2.0, 0.0, -0.45), (x1 - cx - plaza, 2 * bh, 1.0),
-                kind="ground", material="Slate")
-    keep_out(cx - plaza - 4, -plaza - 4, cx + plaza + 4, plaza + 4)
-    keep_out(cx + plaza, -bh - 6, x1, bh + 6)
+    for s in (-1, 1):
+        mb.box(((px0 + px1) / 2.0, s * (py + 0.8), 0.2), (px1 - px0 + 3.2, 1.6, 0.4), pal["gold"])
+    mb.box((px0 - 0.8, 0.0, 0.2), (1.6, 2 * py, 0.4), pal["gold"])
+    mb.checker(px0, -22.0, px1, 22.0, 0.09, 8.0, pal["stone"], pal["stone_dark"])
+    mb.checker(pcx - 22.0, -py, pcx + 22.0, py, 0.14, 8.0, pal["stone"], pal["stone_dark"])
+    for s in (-1, 1):
+        mb.box(((px0 + px1) / 2.0, s * 22.8, 0.2), (px1 - px0, 1.6, 0.3), pal["gold"])
+        mb.box((pcx + s * 22.8, 0.0, 0.25), (1.6, 2 * py, 0.3), pal["gold"])
+    keep_out(px0 - 6, -28, px1 + 6, 28)
+    keep_out(pcx - 28, -py, pcx + 28, py)
+    keep_out(sx - 2, -L["col_span"] / 2.0, sx + 18, L["col_span"] / 2.0)   # base fronts
 
-    # Fountain and the ring of spawn pads around it.
-    mb.cylinder((cx, 0.0, 1.6), 17.0, 3.2, pal["stone"], segments=14, solid=True)
-    mb.cylinder((cx, 0.0, 3.3), 15.0, 0.8, pal["water"], segments=14)
-    mb.cylinder((cx, 0.0, 6.0), 4.0, 9.0, pal["stone_dark"], segments=10, solid=True)
-    mb.cylinder((cx, 0.0, 11.5), 6.5, 2.0, pal["stone"], segments=12, taper=0.5)
-    mb.cylinder((cx, 0.0, 15.0), 2.2, 6.0, pal["glow_cyan"], segments=8)
+    # Centre piece: medallion, reflecting pool, fountain jets, tiered pedestal, statue.
+    mb.cylinder((pcx, 0.0, 0.2), 52.0, 0.4, pal["marble_dark"], segments=24)
+    mb.cylinder((pcx, 0.0, 0.3), 50.0, 0.4, pal["gold"], segments=24)
+    mb.cylinder((pcx, 0.0, 1.2), 46.0, 2.4, pal["stone"], segments=24, solid=True)
+    mb.cylinder((pcx, 0.0, 2.3), 46.6, 0.5, pal["gold"], segments=24)
+    mb.cylinder((pcx, 0.0, 2.35), 43.5, 0.5, pal["water"], segments=24)
+    for i in range(8):
+        a = 2 * math.pi * i / 8 + math.pi / 8
+        jx, jy = pcx + math.cos(a) * 36.0, math.sin(a) * 36.0
+        mb.cylinder((jx, jy, 7.0), 0.7, 9.0, pal["glow_cyan"], segments=6, taper=0.4)
+        mb.sphere((jx, jy, 11.8), 1.3, pal["glow_cyan"], rings=4, segments=8)
+    mb.cylinder((pcx, 0.0, 4.4), 24.0, 4.0, pal["stone_dark"], segments=16, solid=True)
+    mb.cylinder((pcx, 0.0, 6.5), 24.4, 0.6, pal["gold"], segments=16)
+    mb.cylinder((pcx, 0.0, 8.4), 19.0, 4.0, pal["marble"], segments=16, solid=True)
+    mb.cylinder((pcx, 0.0, 11.9), 14.0, 3.0, pal["marble_dark"], segments=16, solid=True)
+    for i in range(16):
+        a = 2 * math.pi * i / 16
+        mb.box((pcx + math.cos(a) * 19.2, math.sin(a) * 19.2, 9.0), (1.2, 2.2, 2.2),
+               pal["glow_violet"], rot_z=a)
+    k = CONFIG["statue_scale"]
+    add_kaiju_statue(mb, pal, Frame(pcx, 0.0, math.pi / 2.0), 13.4, k)
+    keep_out_around(pcx, 0.0, 82.0)
+    for i in range(6):
+        a = 2 * math.pi * i / 6 + 0.3
+        add_floating_crystal(mb, pal, pcx + math.cos(a) * 58.0, math.sin(a) * 58.0,
+                             78.0 + 12.0 * (i % 3), 6.0, pal["glow_violet"])
+
+    # Spawn ring between the pool and the colonnade.
     spawns = []
-    for k in range(8):
-        a = math.radians(22.5 + 45.0 * k)
-        px, py = cx + math.cos(a) * 32.0, math.sin(a) * 32.0
-        mb.cylinder((px, py, 0.25), 4.5, 0.4, pal["marble_dark"], segments=10)
-        mb.cylinder((px, py, 0.3), 3.2, 0.42, pal["glow_cyan"], segments=10)
-        spawns.append((px, py, 0.05))
+    for i in range(8):
+        a = math.radians(22.5 + 45.0 * i)
+        px, py_ = pcx + math.cos(a) * 58.0, math.sin(a) * 58.0
+        mb.cylinder((px, py_, 0.3), 5.0, 0.5, pal["marble_dark"], segments=12)
+        mb.cylinder((px, py_, 0.35), 3.6, 0.52, pal["glow_cyan"], segments=12)
+        spawns.append((px, py_, 0.05))
 
-    # Portal row on the north side, facing the fountain.
+    # Colonnade ring with lintels, open where the avenues cross it.
+    radius, pillars = 72.0, {}
+    for i in range(16):
+        if i % 4 == 0:
+            continue
+        a = 2 * math.pi * i / 16
+        cx_, cy_ = pcx + math.cos(a) * radius, math.sin(a) * radius
+        pillars[i] = a
+        mb.box((cx_, cy_, 1.0), (7.0, 7.0, 2.0), pal["marble_dark"], rot_z=a)
+        mb.cylinder((cx_, cy_, 17.0), 2.6, 30.0, pal["marble"], segments=10, solid=True)
+        mb.box((cx_, cy_, 33.1), (7.0, 7.0, 2.2), pal["gold"], rot_z=a)
+        mb.sphere((cx_, cy_, 36.2), 2.0, pal["glow_violet"], rings=4, segments=8)
+    chord = 2 * radius * math.sin(math.pi / 16)
+    for i in range(16):
+        if i in pillars and (i + 1) % 16 in pillars:
+            am = 2 * math.pi * (i + 0.5) / 16
+            rm = radius * math.cos(math.pi / 16)
+            mb.box((pcx + math.cos(am) * rm, math.sin(am) * rm, 34.6), (chord + 7.0, 3.6, 1.6),
+                   pal["stone_dark"], rot_z=am + math.pi / 2)
+
+    # North wing: gallery of portals, one per zone plus MA BASE.
     portals = []
     targets = [("base", "portal_base", "base", "glow_pink", "MA BASE")]
     targets += [(b["id"], "portal_" + b["id"], "zone:" + b["id"], b["glow"], b["portal"])
                 for b in BIOMES]
-    for k, (pid, text_key, target, glow, label) in enumerate(targets):
-        # One portal per zone, centred; 26 studs apart, so 6 fit a 150-stud plaza.
-        f = Frame(cx + 26.0 * (k - (len(targets) - 1) / 2.0), plaza - 9.0, 0.0)
+    gy = 170.0
+    gw = 30.0 * len(targets) + 20.0
+    mb.box((pcx, gy, 11.0), (gw, 4.0, 22.0), pal["marble"], solid=True)
+    mb.box((pcx, gy, 22.8), (gw + 4.0, 6.0, 1.6), pal["stone_dark"])
+    mb.box((pcx, gy, 24.2), (gw + 5.0, 6.6, 1.2), pal["gold"])
+    for i in range(len(targets) + 1):
+        mb.box((pcx - gw / 2.0 + 2.0 + i * (gw - 4.0) / len(targets), gy - 2.6, 12.0),
+               (3.6, 1.6, 24.0), pal["marble_dark"])
+    for k_, (pid, text_key, target, glow, label) in enumerate(targets):
+        f = Frame(pcx + 30.0 * (k_ - (len(targets) - 1) / 2.0), gy - 20.0, 0.0)
         trigger, label_pos = add_portal(mb, pal, f, glow)
+        mb.box((f.x, gy - 2.4, 13.0), (7.0, 0.6, 16.0), pal[glow])          # banner
+        mb.box((f.x, gy - 2.7, 21.4), (8.4, 1.0, 1.0), pal["gold"])
         sec.text(texts[text_key], "Lobby_PortalText_" + pid, label_pos, upright(f.r))
         portals.append(dict(trigger, id="lobby_" + pid, label=label, target=target))
+    keep_out(pcx - gw / 2.0 - 6, gy - 32, pcx + gw / 2.0 + 6, gy + 6)
 
-    # Leaderboard, south side, facing the fountain.
-    f = Frame(cx, -70.0, math.pi)
-    for lx in (-19.0, 19.0):
-        mb.box(f.p(lx, 0.6, 14.0), (2.4, 2.4, 28.0), pal["wood"], rot_z=f.r, solid=True)
-    mb.box(f.p(0, 0, 16.0), (44.0, 1.6, 24.0), pal["wood_light"], rot_z=f.r, solid=True)
-    mb.box(f.p(0, -0.6, 16.0), (41.0, 0.8, 21.0), pal["board"], rot_z=f.r)
-    mb.box(f.p(0, 0, 30.5), (30.0, 1.2, 5.0), pal["board"], rot_z=f.r)
-    sec.text(texts["classement"], "Lobby_Text_Classement", f.p(0, -0.9, 30.5), upright(f.r))
-    board_face = f.p(0, -1.0, 16.0)
-    for lx, h in ((-12.0, 5.0), (0.0, 7.5), (12.0, 3.5)):   # 2nd, 1st, 3rd seen from the plaza
-        mb.box(f.p(lx, -14.0, h / 2.0), (10.0, 10.0, h), pal["marble"], rot_z=f.r, solid=True)
-        mb.box(f.p(lx, -14.0, h + 0.2), (4.0, 4.0, 0.4), pal["glow_gold"], rot_z=f.r)
-    leaderboard = {"position": board_face, "width": 41.0, "height": 21.0,
-                   "yaw": facing_yaw(*f.front())}
-
-    # Rarity showcase: one glowing capsule per rarity.
+    # Rarity showcase: giant capsule eggs behind the gallery.
     showcase = []
-    for k, (rarity, key) in enumerate(RARITIES):
-        px, py = cx + 30.0 + 10.0 * k, -50.0
-        mb.cylinder((px, py, 1.5), 3.0, 3.0, pal["marble"], segments=10, solid=True)
-        mb.cylinder((px, py, 3.2), 3.4, 0.4, pal["gold"], segments=10)
-        mb.cylinder((px, py, 4.0), 1.4, 1.2, pal["metal_mid"], segments=8)
-        mb.sphere((px, py, 5.9), 1.8, pal[key])
-        showcase.append({"rarity": rarity, "position": (px, py, 5.9)})
-    fb = Frame(cx + 50.0, -57.0, math.pi)
-    for lx in (-21.0, 21.0):
-        mb.box(fb.p(lx, 0, 5.0), (1.2, 1.2, 10.0), pal["wood"], rot_z=fb.r, solid=True)
-    mb.box(fb.p(0, 0, 9.2), (44.0, 0.8, 3.2), pal["board"], rot_z=fb.r)
-    sec.text(texts["rarities"], "Lobby_Text_Raretes", fb.p(0, -0.6, 9.2), upright(fb.r))
+    ey = 238.0
+    for i, (rarity, key) in enumerate(RARITIES):
+        ex = pcx + 42.0 * (i - (len(RARITIES) - 1) / 2.0)
+        mb.cylinder((ex, ey, 3.0), 6.0, 6.0, pal["marble"], segments=12, solid=True)
+        mb.cylinder((ex, ey, 6.2), 6.6, 0.6, pal["gold"], segments=12)
+        mb.cylinder((ex, ey, 7.2), 2.2, 1.6, pal["metal_mid"], segments=8)
+        mb.sphere((ex, ey, 12.0), 5.0, pal[key], rings=6, segments=12)
+        mb.sphere((ex, ey, 15.8), 3.8, pal[key], rings=5, segments=10)
+        showcase.append({"rarity": rarity, "position": (ex, ey, 12.0)})
+    fb = Frame(pcx, ey + 16.0, math.pi)
+    for lx in (-46.0, 46.0):
+        mb.box(fb.p(lx, 0, 9.0), (2.0, 2.0, 18.0), pal["wood"], rot_z=fb.r, solid=True)
+    mb.box(fb.p(0, 0, 16.0), (96.0, 1.2, 6.0), pal["board"], rot_z=fb.r)
+    mb.box(fb.p(0, 0.2, 16.0), (98.0, 1.0, 7.4), pal["gold"], rot_z=fb.r)
+    sec.text(texts["rarities"], "Lobby_Text_Raretes", fb.p(0, -0.9, 16.0), upright(fb.r))
+    keep_out(pcx - 110, ey - 10, pcx + 110, ey + 20)
 
-    # West side: shop, daily reward chest, how-to-play board, all facing +X.
-    shop = Frame(cx - 64.0, -34.0, math.pi / 2.0)
-    sign = add_stall(mb, pal, shop, pal["yellow"])
-    sec.text(texts["boutique"], "Lobby_Text_Boutique", sign, upright(shop.r))
-    chest = Frame(cx - 64.0, 34.0, math.pi / 2.0)
-    mb.cylinder(chest.p(0, 0, 0.12), 7.0, 0.24, pal["glow_gold"], segments=12)
-    mb.box(chest.p(0, 0, 2.6), (9.0, 6.0, 5.0), pal["wood"], rot_z=chest.r, solid=True)
-    mb.box(chest.p(0, 0, 5.9), (9.4, 6.4, 1.6), pal["wood_light"], rot_z=chest.r)
-    for lx in (-3.0, 3.0):
-        mb.box(chest.p(lx, 0, 3.4), (1.0, 6.3, 6.8), pal["gold"], rot_z=chest.r)
-    mb.box(chest.p(0, -3.3, 4.2), (1.6, 0.6, 2.0), pal["gold"], rot_z=chest.r)
-    sec.text(texts["cadeau"], "Lobby_Text_Cadeau", chest.p(0, 0, 10.5), upright(chest.r))
-    tuto = Frame(cx - 70.0, 0.0, math.pi / 2.0)
-    for lx in (-14.0, 14.0):
-        mb.box(tuto.p(lx, 0.8, 11.0), (1.6, 1.6, 22.0), pal["wood"], rot_z=tuto.r, solid=True)
-    mb.box(tuto.p(0, 0, 13.0), (30.0, 1.2, 18.0), pal["board"], rot_z=tuto.r, solid=True)
-    mb.box(tuto.p(0, 0.2, 13.0), (31.6, 1.0, 19.6), pal["wood_light"], rot_z=tuto.r)
-    sec.text(texts["tuto_title"], "Lobby_Text_Tuto", tuto.p(0, -0.8, 19.5), upright(tuto.r))
+    # South wing: giant leaderboard and podium, tutorial board, daily reward.
+    f = Frame(pcx, -200.0, math.pi)
+    for lx in (-30.0, 30.0):
+        mb.box(f.p(lx, 0.8, 20.0), (3.0, 3.0, 40.0), pal["wood"], rot_z=f.r, solid=True)
+    mb.box(f.p(0, 0, 21.0), (64.0, 2.0, 34.0), pal["gold"], rot_z=f.r, solid=True)
+    mb.box(f.p(0, -0.8, 21.0), (60.0, 1.0, 30.0), pal["board"], rot_z=f.r)
+    mb.box(f.p(0, 0, 42.0), (40.0, 1.6, 7.0), pal["board"], rot_z=f.r)
+    sec.text(texts["classement"], "Lobby_Text_Classement", f.p(0, -1.2, 42.0), upright(f.r))
+    leaderboard = {"position": f.p(0, -1.3, 21.0), "width": 60.0, "height": 30.0,
+                   "yaw": facing_yaw(*f.front())}
+    for place, lx, h in ((2, -15.0, 7.0), (1, 0.0, 10.0), (3, 15.0, 5.0)):
+        mb.box(f.p(lx, -22.0, h / 2.0), (13.0, 13.0, h), pal["marble"], rot_z=f.r, solid=True)
+        mb.box(f.p(lx, -22.0, h + 0.2), (13.6, 13.6, 0.4), pal["gold"], rot_z=f.r)
+        sec.text(texts["place_%d" % place], "Lobby_Text_Place%d" % place,
+                 f.p(lx, -28.8, h / 2.0), upright(f.r))
+    keep_out(pcx - 40, -212, pcx + 40, -168)
+
+    tuto = Frame(pcx - 100.0, -150.0, math.pi)
+    for lx in (-16.0, 16.0):
+        mb.box(tuto.p(lx, 0.8, 12.0), (1.8, 1.8, 24.0), pal["wood"], rot_z=tuto.r, solid=True)
+    mb.box(tuto.p(0, 0, 14.0), (34.0, 1.2, 20.0), pal["board"], rot_z=tuto.r, solid=True)
+    mb.box(tuto.p(0, 0.2, 14.0), (35.6, 1.0, 21.6), pal["wood_light"], rot_z=tuto.r)
+    sec.text(texts["tuto_title"], "Lobby_Text_Tuto", tuto.p(0, -0.8, 21.0), upright(tuto.r))
     for i in range(1, 5):
         sec.text(texts["tuto_%d" % i], "Lobby_Text_Tuto%d" % i,
-                 tuto.p(0, -0.8, 19.5 - 3.4 * i), upright(tuto.r))
+                 tuto.p(0, -0.8, 21.0 - 3.8 * i), upright(tuto.r))
+    keep_out(tuto.x - 22, tuto.y - 8, tuto.x + 22, tuto.y + 6)
 
-    # Bridge gate with the game title, facing the plaza.
-    gx = x1 - 6.0
-    for sy in (-1, 1):
-        mb.box((gx, sy * 24.0, 17.0), (8.0, 8.0, 34.0), pal["marble"], solid=True)
-        mb.box((gx, sy * 24.0, 35.0), (9.5, 9.5, 2.0), pal["gold"])
-    mb.box((gx, 0.0, 36.0), (8.0, 60.0, 8.0), pal["marble"])
-    mb.box((gx, 0.0, 40.6), (9.0, 62.0, 1.2), pal["gold"])
-    mb.box((gx, 0.0, 31.6), (3.0, 40.0, 0.8), pal["glow_violet"])
-    sec.text(texts["title"], "Lobby_Text_Title", (gx - 4.4, 0.0, 36.0), upright(-math.pi / 2.0))
-    keep_out(gx - 8, -32, x1, 32)
+    chest = Frame(pcx + 100.0, -150.0, math.pi)
+    mb.cylinder(chest.p(0, 0, 0.2), 11.0, 0.3, pal["glow_gold"], segments=16)
+    mb.cylinder(chest.p(0, 0, 0.9), 9.5, 1.4, pal["marble_dark"], segments=16, solid=True)
+    mb.box(chest.p(0, 0, 5.5), (14.0, 9.0, 8.0), pal["wood"], rot_z=chest.r, solid=True)
+    mb.roof(chest.p(0, 0, 10.8), (14.4, 9.4, 2.8), pal["wood_light"], rot_z=chest.r)
+    for lx in (-4.5, 4.5):
+        mb.box(chest.p(lx, 0, 6.8), (1.4, 9.4, 10.6), pal["gold"], rot_z=chest.r)
+    mb.box(chest.p(0, -4.7, 7.2), (2.4, 0.8, 3.0), pal["gold"], rot_z=chest.r)
+    for i in range(6):
+        a = 2 * math.pi * i / 6
+        mb.sphere(chest.p(math.cos(a) * 8.0, math.sin(a) * 8.0, 2.4), 1.0, pal["glow_gold"],
+                  rings=3, segments=6)
+    sec.text(texts["cadeau"], "Lobby_Text_Cadeau", chest.p(0, 0, 17.0), upright(chest.r))
+    keep_out(chest.x - 14, chest.y - 14, chest.x + 14, chest.y + 14)
 
-    # Lamps and greenery around the plaza.
-    corner, path_a, path_b = plaza + 3.0, plaza + 9.0, plaza + 19.0
-    for lx, ly in ((corner, corner), (-corner, corner), (corner, -corner), (-corner, -corner),
-                   (path_a, 20), (path_a, -20), (path_b, 20), (path_b, -20)):
-        add_lamp(mb, pal, cx + lx, ly, glow=pal["glow_gold"])
-        keep_out_around(cx + lx, ly, 4.0)
-    ring = [(x, y) for x, y in scatter(
-        rng, 26, lambda r: (r.uniform(x0 + rim + 4, x1 - rim - 4), r.uniform(y0 + rim + 4, y1 - rim - 4)),
-        5.0)]
-    for x, y in ring:
-        roll = rng.random()
-        if roll < 0.4:
-            add_tree(mb, pal, x, y, rng, solid=True)
-        elif roll < 0.8:
-            add_bush(mb, pal, x, y, rng)
+    # The two shops flanking the corridor mouth, as on the plan.
+    shops = {}
+    for key, sy, stripe, display, title, sub in (
+            ("shop", 1, pal["yellow"], "capsules", "shop_title", "shop_sub"),
+            ("speedShop", -1, pal["blue"], "speed", "speed_title", "speed_sub")):
+        f = Frame(-40.0, sy * (wy + 44.0), 0.0 if sy > 0 else math.pi)
+        main_pos, sub_pos = add_shop(mb, pal, f, stripe, display)
+        sec.text(texts[title], "Lobby_Text_" + title, main_pos, upright(f.r))
+        sec.text(texts[sub], "Lobby_Text_" + sub, sub_pos, upright(f.r))
+        shops[key] = {"position": f.p(0, -9.0, 0.0), "yaw": facing_yaw(*f.front())}
+        keep_out(f.x - 26, f.y - 20, f.x + 26, f.y + 20)
+
+    # Monumental gate over the corridor mouth, with kaiju gargoyles.
+    ty = wy + 12.0
+    for s in (-1, 1):
+        mb.box((0.0, s * ty, 33.0), (22.0, 22.0, 66.0), pal["marble"], solid=True)
+        for z in (1.5, 22.0, 46.0):
+            mb.box((0.0, s * ty, z), (23.4, 23.4, 1.6 if z > 2 else 3.0), pal["gold"])
+        mb.box((0.0, s * ty, 67.5), (26.0, 26.0, 3.0), pal["stone_dark"])
+        mb.box((-11.2, s * ty, 36.0), (0.8, 8.0, 18.0), pal[BIOMES[0]["glow"]])
+        add_kaiju_head(mb, pal, Frame(0.0, s * ty, -math.pi / 2.0), 69.0, 1.3)
+    mb.box((0.0, 0.0, 59.0), (16.0, 2 * ty, 12.0), pal["marble"])
+    mb.box((0.0, 0.0, 52.6), (16.8, 2 * ty, 1.0), pal["gold"])
+    mb.box((0.0, 0.0, 52.0), (5.0, 2 * wy, 1.0), pal["glow_violet"])
+    mb.box((0.0, 0.0, 69.0), (10.0, 60.0, 8.0), pal["marble_dark"])
+    mb.sphere((0.0, 0.0, 76.5), 3.2, pal["glow_violet"], rings=5, segments=10)
+    sec.text(texts["title"], "Lobby_Text_Title", (-8.6, 0.0, 59.0), upright(-math.pi / 2.0))
+    mb.box((-8.0, 0.0, 47.5), (3.0, 72.0, 6.0), pal["stone_dark"])
+    sec.text(texts["gate_" + BIOMES[0]["id"]], "Lobby_GateText", (-9.9, 0.0, 47.5),
+             upright(-math.pi / 2.0))
+    mb.box((-4.0, 0.0, 0.2), (2.0, 2 * ch, 0.3), pal[BIOMES[0]["glow"]])
+    keep_out(-40, -ty - 14, 1, ty + 14)
+
+    # Corner towers, braziers, balustrades, lamps.
+    for tx, ty_, banner in ((x0 + 14.0, edge - 4.0, "glow_violet"), (x0 + 14.0, -edge + 4.0, "glow_violet"),
+                            (x1 - 14.0, edge - 4.0, "glow_gold"), (x1 - 14.0, -edge + 4.0, "glow_gold")):
+        add_tower(mb, pal, tx, ty_, banner=banner)
+        keep_out_around(tx, ty_, 14.0)
+    for bx, by in ((px0 + 14.0, 34.0), (px0 + 14.0, -34.0), (-26.0, 34.0), (-26.0, -34.0),
+                   (pcx - 34.0, py - 12.0), (pcx + 34.0, py - 12.0),
+                   (pcx - 34.0, -py + 12.0), (pcx + 34.0, -py + 12.0)):
+        add_brazier(mb, pal, bx, by)
+        keep_out_around(bx, by, 5.0)
+    for s in (-1, 1):
+        yb = s * (edge - 1.0)
+        mb.box(((x0 + rim + 24.0 + x1 - 24.0) / 2.0, yb, 1.4), (x1 - x0 - rim - 48.0, 1.6, 2.8),
+               pal["marble"], solid=True)
+        for i in range(int((x1 - x0 - rim - 48.0) // 12.0) + 1):
+            mb.box((x0 + rim + 24.0 + i * 12.0, yb, 1.8), (2.4, 2.4, 3.6), pal["marble_dark"])
+            mb.sphere((x0 + rim + 24.0 + i * 12.0, yb, 4.2), 0.9, pal["gold"], rings=3, segments=6)
+        ya, yb2 = s * (ty + 12.0), s * (edge - 24.0)
+        mb.box((x1 - 1.0, (ya + yb2) / 2.0, 1.4), (1.6, abs(yb2 - ya), 2.8), pal["marble"], solid=True)
+    for x in range(int(px0) + 20, int(px1) - 10, 34):
+        if abs(x - pcx) < 88.0:
+            continue
+        for s in (-1, 1):
+            add_lamp(mb, pal, float(x), s * 30.0, glow=pal["glow_gold"])
+            keep_out_around(float(x), s * 30.0, 3.5)
+    for y in range(90, int(py) - 10, 34):
+        for s in (-1, 1):
+            for lx in (-30.0, 30.0):
+                if is_free(pcx + lx, s * y, 3.5):
+                    add_lamp(mb, pal, pcx + lx, s * float(y), glow=pal["glow_violet"])
+                    keep_out_around(pcx + lx, s * float(y), 3.5)
+
+    # Gardens: trees in marble planters and flower beds across the free plaza.
+    for x, y in scatter(rng, 34, lambda r: (r.uniform(px0 + 8, px1 - 8), r.uniform(-py + 8, py - 8)),
+                        7.0):
+        if rng.random() < 0.65:
+            add_planter_tree(mb, pal, x, y, rng)
         else:
+            mb.box((x, y, 0.5), (8.0, 5.0, 1.0), pal["marble_dark"])
             add_flowers(mb, pal, x, y, rng)
-
-    # Bridge to the main island.
-    bx0, bx1 = L["lobby_x1"], L["island_x_min"]
-    bm, blen = (bx0 + bx1) / 2.0, bx1 - bx0
-    mb.box((bm, 0.0, -0.9), (blen, 2 * bh, 1.8), pal["wood"])
-    n = int(blen // 3.5)
-    for i in range(n):
-        if i % 2 == 0:
-            mb.box((bx0 + (i + 0.5) * blen / n, 0.0, 0.03), (blen / n - 0.3, 2 * bh - 1.0, 0.06),
-                   pal["wood_light"])
-    mb.collider("box", (bm, 0.0, -1.0), (blen, 2 * bh, 2.0), kind="ground", material="WoodPlanks")
-    for sy in (-1, 1):
-        yr = sy * (bh - 0.5)
-        for i in range(int(blen // 7.0) + 1):
-            mb.box((bx0 + i * blen / int(blen // 7.0), yr, 2.25), (1.0, 1.0, 4.5), pal["wood_light"])
-        mb.box((bm, yr, 4.2), (blen, 0.7, 0.7), pal["wood"])
-        mb.box((bm, yr, 2.2), (blen, 0.5, 0.5), pal["wood"])
-        mb.box((bm, sy * (bh - 1.6), 0.08), (blen, 0.5, 0.16), pal["glow_cyan"])
-        mb.collider("box", (bm, yr, 2.25), (blen, 1.0, 4.5))
-    for px in (bx0 + 18.0, bx1 - 18.0):
-        mb.box((px, 0.0, -24.0), (8.0, 2 * bh - 6.0, 44.0), pal["stone_dark"])
 
     sec.emit(mb, "Lobby")
 
-    # Invisible walls around the lobby, open where the bridge leaves.
-    barrier("Lobby", x0, y1 + 1.0, x1, y1 + 1.0)
-    barrier("Lobby", x0, y0 - 1.0, x1, y0 - 1.0)
-    barrier("Lobby", x0 - 1.0, y0, x0 - 1.0, y1)
-    barrier("Lobby", x1 + 1.0, bh, x1 + 1.0, y1)
-    barrier("Lobby", x1 + 1.0, y0, x1 + 1.0, -bh)
+    # Invisible walls: lobby edges, and the lobby's east edge around the corridor.
+    barrier("Lobby", x0, H + 1.0, x1, H + 1.0)
+    barrier("Lobby", x0, -H - 1.0, x1, -H - 1.0)
+    barrier("Lobby", x0 - 1.0, -H, x0 - 1.0, H)
+    barrier("Lobby", x1 + 1.0, wy, x1 + 1.0, H)
+    barrier("Lobby", x1 + 1.0, -H, x1 + 1.0, -wy)
 
     return {
-        "center": (cx, 0.0, 0.05),
-        "bounds": ((x0, y0, 0.0), (bx1, y1, 0.0)),
+        "center": (pcx, 0.0, 0.05),
+        "bounds": ((x0, -H, 0.0), (x1, H, 0.0)),
         "spawns": spawns,
-        "spawnYaw": facing_yaw(0.0, 1.0),
+        "spawnYaw": facing_yaw(1.0, 0.0),
         "portals": portals,
         "leaderboard": leaderboard,
         "showcase": showcase,
-        "shop": shop.p(0, 0, 0.0),
+        "shop": shops["shop"],
+        "speedShop": shops["speedShop"],
         "dailyReward": chest.p(0, 0, 0.0),
-        "tutorialBoard": {"position": tuto.p(0, -0.6, 13.0), "width": 30.0, "height": 18.0,
+        "statue": (pcx, 0.0, 13.4),
+        "tutorialBoard": {"position": tuto.p(0, -0.7, 14.0), "width": 34.0, "height": 20.0,
                           "yaw": facing_yaw(*tuto.front())},
-        "bridge": ((bx0, -bh, 0.0), (bx1, bh, 0.0)),
     }
 
 
@@ -1442,125 +1685,82 @@ def build_island_base(world, pal, L):
     sec = world.section("Island")
     mb = MeshBuilder()
     rng = random.Random(CONFIG["seed"] + 99)
-    add_floating_body(mb, pal, L["island_x_min"], -L["island_y"], L["island_x_max"], L["island_y"],
+    add_floating_body(mb, pal, 0.0, -L["island_y"], L["corridor_len"], L["island_y"],
                       CONFIG["dirt_depth"], CONFIG["taper_depth"], rng, rocks=26)
     sec.emit(mb, "Island_Body")
 
 
 def build_zone(world, pal, L, index, x0, x1, biome, texts):
-    """One corridor zone: ground band, rims, plot walls and back walls of its
-    cell, street props, zone gate, landmarks - or the desert and its arena."""
+    """One corridor zone: ground, the two corridor walls, lamps and props along
+    them, the gate with the zone's name, landmarks behind the walls - and for
+    the last zone, the boss arena."""
     sec = world.section(section_name(index, biome))
     mb = MeshBuilder()
     rng = random.Random(CONFIG["seed"] * 31 + index)
-    sh, iy, rim = CONFIG["street_half"], L["island_y"], 11.0
-    n = CONFIG["plots_per_side"]
-    is_first, is_last = index == 1, index == len(BIOMES)
-    h, t, depth = CONFIG["wall_height"], CONFIG["wall_thickness"], CONFIG["plot_depth"]
+    ch, wy, iy, rim = L["corridor_half"], L["corridor_wall_y"], L["island_y"], 10.0
+    h = CONFIG["corridor_wall_height"]
+    is_last = index == len(BIOMES)
+    wall_a, wall_b = pal[biome["wall"][0]], pal[biome["wall"][1]]
 
     # Ground and rims.
     a, b = biome["floor"]
     tile = CONFIG["tile"] * (1.6 if biome["decor"] == "desert" else 1.0)
-    gx0 = x0 + rim if is_first else x0
-    gx1 = x1 - rim if is_last else x1
-    mb.checker(gx0, -iy + rim, gx1, iy - rim, 0.0, tile, pal[a], pal[b])
-    add_rims(mb, pal[biome["rim"]], x0, -iy, x1, iy, rim, west=is_first, east=is_last)
+    mb.checker(x0, -iy + rim, x1 - rim if is_last else x1, iy - rim, 0.0, tile, pal[a], pal[b])
+    add_rims(mb, pal[biome["rim"]], x0, -iy, x1, iy, rim, west=False, east=is_last)
     mb.collider("box", ((x0 + x1) / 2.0, 0.0, -2.0), (x1 - x0, 2 * iy, 4.0),
                 kind="ground", material=biome["ground"])
 
-    # Plot walls of this cell (wall i opens cell i; the trailing wall closes the last one).
-    for w, wx in enumerate(L["wall_centers"]):
-        if min(w, n - 1) + 1 != index:
-            continue
-        wall_a, wall_b = pal[biome["wall"][0]], pal[biome["wall"][1]]
-        for side in (1, -1):
-            y_a, y_b = side * sh, side * (sh + depth)
-            mb.box((wx, side * (sh + depth / 2.0), h / 2.0), (t, depth, h), wall_a, solid=True)
-            mb.box((wx, side * (sh + depth / 2.0), h + 1.0), (t + 1.5, depth + 1.5, 2.0),
-                   pal[biome["cap"]])
-            mb.checker_yz(wx - t / 2.0 - 0.2, min(y_a, y_b), 0.0, max(y_a, y_b), h,
-                          CONFIG["tile"], wall_a, wall_b, facing=-1)
-            mb.checker_yz(wx + t / 2.0 + 0.2, min(y_a, y_b), 0.0, max(y_a, y_b), h,
-                          CONFIG["tile"], wall_b, wall_a, facing=1)
-            mb.checker_xz(y_a - side * 0.2, wx - t / 2.0, 0.0, wx + t / 2.0, h,
-                          CONFIG["tile"], wall_a, wall_b, facing=-side)
+    # Corridor walls (in the last zone they stop where the arena ring starts).
+    wall_end = L["ring_x"] + 6.0 if is_last else x1
+    wl, wm = wall_end - x0, (x0 + wall_end) / 2.0
+    for s in (1, -1):
+        mb.box((wm, s * wy, h / 2.0), (wl, 8.0, h), wall_a, solid=True)
+        mb.box((wm, s * wy, h + 1.0), (wl, 9.6, 2.0), pal[biome["cap"]])
+        mb.checker_xz(s * (wy - 4.2), x0, 0.0, wall_end, h, CONFIG["tile"], wall_a, wall_b,
+                      facing=-s)
+        mb.checker_xz(s * (wy + 4.2), x0, 0.0, wall_end, h, CONFIG["tile"], wall_b, wall_a,
+                      facing=s)
+        mb.box((wm, s * (ch - 0.4), 0.1), (wl, 0.8, 0.2), pal[biome["glow"]])
 
-    if index <= n:
-        # Back walls closing the two plots of this cell.
-        bx0 = L["row_x0"] + (index - 1) * L["cell"]
-        bxm = bx0 + L["cell"] / 2.0
-        for side in (1, -1):
-            mb.box((bxm, side * L["back_wall_y"], h / 2.0), (L["cell"], 6.0, h),
-                   pal[biome["wall"][0]], solid=True)
-            mb.box((bxm, side * L["back_wall_y"], h + 1.05), (L["cell"], 7.5, 2.1),
-                   pal[biome["cap"]])
-        # Street lamps and axis dashes.
-        for x in range(int(L["row_x0"]) + 20, int(L["row_x1"]), 74):
-            if x0 <= x < x1:
-                for side in (1, -1):
-                    add_lamp(mb, pal, float(x), side * (sh - 6.0), glow=pal[biome["glow"]])
-                    keep_out_around(float(x), side * (sh - 6.0), 4.0)
-        for x in range(int(L["row_x0"]), int(L["row_x1"]), 26):
-            if x0 <= x + 6.0 < x1:
-                mb.box((x + 6.0, 0.0, 0.12), (12.0, 2.2, 0.24), pal[biome["wall"][1]])
-        # Props along the street edges (solid, players walk past them) ...
-        ex0 = max(x0, L["island_x_min"] + 24.0)
-        for x, y in scatter(rng, biome["street_props"],
-                            lambda r: (r.uniform(ex0, x1 - 6.0),
-                                       r.choice((1, -1)) * r.uniform(sh - 11.0, sh - 4.0)), 4.0):
-            add_biome_decor(mb, pal, biome, x, y, rng, solid=True)
-        # ... and scenery in the margins behind the back walls (unreachable).
-        mx0, mx1 = max(x0, L["row_x0"]) + 6.0, min(x1, L["row_x1"]) - 6.0
-        ym0, ym1 = L["back_wall_y"] + 9.0, iy - 14.0
-        landmark_x = L["plot_centers"][index - 1]
-        for side in (1, -1):
-            keep_out_around(landmark_x, side * 190.0, 24.0)
-            add_landmark(mb, pal, biome, landmark_x, side * 190.0, rng)
-        for x, y in scatter(rng, biome["margin_props"],
-                            lambda r: (r.uniform(mx0, mx1), r.choice((1, -1)) * r.uniform(ym0, ym1)),
-                            4.0):
-            add_biome_decor(mb, pal, biome, x, y, rng)
+    # Gate with the zone name (zone 1's gate is the lobby's monumental gate).
+    if index > 1:
+        for s in (1, -1):
+            mb.box((x0, s * wy, 20.0), (14.0, 14.0, 40.0), wall_b, solid=True)
+            mb.box((x0, s * wy, 40.8), (15.4, 15.4, 1.6), pal[biome["cap"]])
+            mb.sphere((x0, s * wy, 43.4), 2.6, pal[biome["glow"]], rings=4, segments=8)
+        mb.box((x0, 0.0, 36.0), (12.0, 2 * wy + 14.0, 6.0), wall_b)
+        mb.box((x0, 0.0, 39.4), (12.6, 2 * wy + 15.0, 0.8), pal[biome["cap"]])
+        mb.box((x0, 0.0, 32.6), (4.0, 2 * ch, 0.8), pal[biome["glow"]])
+        mb.box((x0, 0.0, 0.08), (1.6, 2 * ch, 0.16), pal[biome["glow"]])
+        sec.text(texts["gate_" + biome["id"]], sec.name + "_GateText", (x0 - 6.45, 0.0, 36.0),
+                 upright(-math.pi / 2.0))
 
-    zone_spawn_x = x0 + 26.0
+    # Lamps along the walls, props at the foot of the walls, scenery behind them.
+    for x in range(int(x0) + 20, int(wall_end) - 10, 40):
+        for s in (1, -1):
+            add_lamp(mb, pal, float(x), s * (ch - 5.0), glow=pal[biome["glow"]])
+            keep_out_around(float(x), s * (ch - 5.0), 4.0)
+    for x, y in scatter(rng, biome["street_props"],
+                        lambda r: (r.uniform(x0 + 12.0, wall_end - 12.0),
+                                   r.choice((1, -1)) * r.uniform(ch - 16.0, ch - 9.0)), 4.0):
+        add_biome_decor(mb, pal, biome, x, y, rng, solid=True)
+    landmark_x = (x0 + x1) / 2.0 if not is_last else x0 + 48.0
+    for s in (1, -1):
+        keep_out_around(landmark_x, s * (wy + 34.0), 24.0)
+        add_landmark(mb, pal, biome, landmark_x, s * (wy + 34.0), rng)
+    mx1 = wall_end - 30.0 if is_last else x1 - 4.0
+    for x, y in scatter(rng, biome["margin_props"],
+                        lambda r: (r.uniform(x0 + 4.0, mx1),
+                                   r.choice((1, -1)) * r.uniform(wy + 10.0, iy - rim - 4.0)), 4.0):
+        add_biome_decor(mb, pal, biome, x, y, rng)
+
     return_portal = None
-    if is_first:
-        # Entrance square: return portal, stone path from the bridge, archway.
-        f = Frame(L["island_x_min"] + 22.0, -62.0, math.pi / 2.0)
-        trigger, label_pos = add_portal(mb, pal, f, "glow_violet")
-        keep_out_around(f.x, f.y, 14.0)
-        sec.text(texts["portal_lobby"], sec.name + "_PortalText", label_pos, upright(f.r))
-        return_portal = dict(trigger, id="return_entrance", label="LOBBY", target="lobby")
-        ax = L["row_x0"] - 16.0
-        mb.checker(L["island_x_min"], -CONFIG["bridge_half"], ax - 5.0, CONFIG["bridge_half"],
-                   0.05, 8.0, pal["stone"], pal["stone_dark"])
-        for side in (1, -1):
-            mb.box((ax, side * 38.0, 22.0), (10.0, 12.0, 44.0), pal["stone"], solid=True)
-            mb.box((ax, side * 38.0, 45.0), (13.0, 15.0, 3.0), pal["stone_dark"])
-            mb.box((ax, side * 30.0, 30.0), (5.0, 3.0, 5.0), pal[biome["glow"]])
-            keep_out(ax - 7, side * 30.0, ax + 7, side * 46.0)
-        mb.box((ax, 0.0, 48.0), (12.0, 88.0, 8.0), pal["stone"])
-        mb.box((ax, 0.0, 53.5), (14.0, 92.0, 3.0), pal["stone_dark"])
-        mb.box((ax, 0.0, 44.0), (6.0, 60.0, 2.5), pal[biome["glow"]])
-        sec.text(texts["gate_" + biome["id"]], sec.name + "_GateText", (ax - 6.4, 0.0, 48.0),
-                 upright(-math.pi / 2.0))
-        keep_out(L["island_x_min"], -CONFIG["bridge_half"] - 4, ax + 6, CONFIG["bridge_half"] + 4)
-        zone_spawn_x = L["island_x_min"] + 22.0
-        ex_x0, ex_x1 = L["island_x_min"] + 14.0, L["row_x0"] - 8.0
-        for x, y in scatter(rng, 14, lambda r: (r.uniform(ex_x0, ex_x1),
-                                                r.choice((1, -1)) * r.uniform(52.0, iy - 16.0)), 5.0):
-            (add_tree if rng.random() < 0.5 else add_bush)(mb, pal, x, y, rng, solid=True)
-    elif index <= n + 1:
-        gx = L["wall_centers"][index - 1]
-        add_zone_gate(mb, pal, biome, gx)
-        sec.text(texts["gate_" + biome["id"]], sec.name + "_GateText", (gx - 6.45, 0.0, 33.0),
-                 upright(-math.pi / 2.0))
-        zone_spawn_x = gx + 18.0
-
     if is_last:
-        return_portal = build_desert(mb, pal, L, x0, x1, biome, rng, sec, texts)
-        zone_spawn_x = L["desert_x0"] + 14.0
+        return_portal = build_arena(mb, pal, L, rng, sec, texts)
 
     sec.emit(mb, sec.name)
+    if is_last:
+        barrier(sec.name, x1 + 1.0, -iy, x1 + 1.0, iy)
 
     area = capsule_area(L, index, x0, x1)
     return {
@@ -1568,17 +1768,43 @@ def build_zone(world, pal, L, index, x0, x1, biome, texts):
         "index": index,
         "section": sec.name,
         "bounds": ((x0, -iy, 0.0), (x1, iy, 0.0)),
-        "spawn": (zone_spawn_x, 0.0, 0.0),
+        "spawn": (x0 + (30.0 if index == 1 else 18.0), 0.0, 0.0),
         "spawnYaw": facing_yaw(1.0, 0.0),
         "capsuleArea": ((area[0], area[1], 0.0), (area[2], area[3], 0.0)),
         "returnPortal": return_portal,
     }
 
 
-def build_desert(mb, pal, L, x0, x1, biome, rng, sec, texts):
-    """Desert band: dunes, cacti, step pyramids and the boss altar."""
-    iy = L["island_y"]
-    ax = L["arena_x"]
+def build_arena(mb, pal, L, rng, sec, texts):
+    """Circular boss arena closing the corridor: ring wall, tribunes, altar."""
+    ax, r = L["arena_x"], L["arena_r"]
+    h = CONFIG["corridor_wall_height"]
+    wy = L["corridor_wall_y"]
+    mb.cylinder((ax, 0.0, 0.1), r - 4.0, 0.2, pal["stone_dark"], segments=32)
+    mb.cylinder((ax, 0.0, 0.15), r - 10.0, 0.2, pal["sand_dark"], segments=32)
+    mb.cylinder((ax, 0.0, 0.2), 60.0, 0.2, pal["stone"], segments=32)
+
+    # Ring wall, open to the west where the corridor arrives.
+    n = 16
+    chord = 2 * r * math.sin(math.pi / n)
+    for i in range(n):
+        am = 2 * math.pi * (i + 0.5) / n
+        if math.cos(am) < 0 and abs(math.sin(am)) * r < wy + 2.0:
+            continue
+        rm = r * math.cos(math.pi / n)
+        cx_, cy_ = ax + math.cos(am) * rm, math.sin(am) * rm
+        # Overlong on purpose: straight segments must overlap on the outside of the curve.
+        mb.box((cx_, cy_, h / 2.0), (chord + 6.0, 8.0, h), pal["sand_dark"], rot_z=am + math.pi / 2,
+               solid=True)
+        mb.box((cx_, cy_, h + 1.0), (chord + 7.0, 9.6, 2.0), pal["sand"], rot_z=am + math.pi / 2)
+        mb.box((ax + math.cos(am) * (rm - 4.2), math.sin(am) * (rm - 4.2), h * 0.6),
+               (5.0, 0.6, 7.0), pal["glow_violet"], rot_z=am + math.pi / 2)
+        # Tribunes behind the wall (scenery).
+        for step in range(3):
+            rr = rm + 8.0 + step * 6.0
+            mb.box((ax + math.cos(am) * rr, math.sin(am) * rr, h * 0.45 + step * 5.0),
+                   (chord + 6.0 + step * 4.0, 6.0, 4.0), pal["stone"] if step % 2 == 0
+                   else pal["stone_dark"], rot_z=am + math.pi / 2)
 
     # Altar: stepped base, pillars, beam, floating rocks.
     mb.cylinder((ax, 0.0, 1.5), 40.0, 3.0, pal["stone"], segments=16, solid=True)
@@ -1594,51 +1820,23 @@ def build_desert(mb, pal, L, x0, x1, biome, rng, sec, texts):
     mb.cylinder((ax, 0.0, 82.0), 5.5, 148.0, pal["glow_violet"], segments=12, taper=0.55)
     for _ in range(7):
         a = rng.uniform(0, 2 * math.pi)
-        r = rng.uniform(16, 52)
-        mb.box((ax + math.cos(a) * r, math.sin(a) * r, rng.uniform(60, 130)),
+        rr = rng.uniform(16, 52)
+        mb.box((ax + math.cos(a) * rr, math.sin(a) * rr, rng.uniform(60, 130)),
                (rng.uniform(9, 22), rng.uniform(9, 22), rng.uniform(5, 12)),
                pal["stone_dark"], rot_z=rng.uniform(0, math.pi))
-    keep_out_around(ax, 0.0, 46.0)
+    keep_out_around(ax, 0.0, r)
 
-    # Step pyramids (climbable, so solid tier by tier).
-    for px, py, base, tiers in ((x1 - 45.0, 160.0, 50.0, 6), (x0 + 48.0, -168.0, 36.0, 4)):
-        add_step_pyramid(mb, pal, px, py, base, tiers, 6.0, solid=True)
-        keep_out_around(px, py, base / 2.0 + 4.0)
-
-    # Return portal to the lobby, facing the arriving players.
-    f = Frame(x0 + 34.0, 72.0, 0.0)
+    # Return portal to the lobby, against the east wall.
+    f = Frame(ax + r - 20.0, 0.0, -math.pi / 2.0)
     trigger, label_pos = add_portal(mb, pal, f, "glow_violet")
-    keep_out_around(f.x, f.y, 14.0)
     sec.text(texts["portal_lobby"], sec.name + "_PortalText", label_pos, upright(f.r))
-
-    gx = L["wall_centers"][-1]
-    keep_out(gx - 10.0, -CONFIG["street_half"], x0 + 30.0, CONFIG["street_half"])
-
-    # Low dunes (walkable, never solid) and props.
-    for _ in range(26):
-        dx = rng.uniform(x0 + 16, x1 - 16)
-        dy = rng.uniform(-iy + 22, iy - 22)
-        if is_free(dx, dy, 6.0):
-            s = rng.uniform(14, 34)
-            mb.box((dx, dy, 0.35), (s, s * rng.uniform(0.6, 1.2), 0.7),
-                   pal["sand_dark"], rot_z=rng.uniform(0, math.pi))
-    for x, y in scatter(rng, 34, lambda r: (r.uniform(x0 + 20, x1 - 14),
-                                             r.uniform(-iy + 18, iy - 18)), 5.0):
-        roll = rng.random()
-        if roll < 0.5:
-            add_cactus(mb, pal, x, y, rng, solid=True)
-        elif roll < 0.8:
-            add_rock(mb, pal, x, y, rng, solid=True)
-        else:
-            add_crate(mb, pal, x, y, rng, solid=True)
-
     return dict(trigger, id="return_arena", label="LOBBY", target="lobby")
 
 
 def build_plot_template(pal):
-    """One base ("case"), in plot-local coordinates: x along the street, y the
-    depth from the street edge. Built once and instanced 8 times, so every
-    player gets the exact same base."""
+    """One base ("case"), in plot-local coordinates: x along the plaza edge, y
+    the depth from it. Built once and instanced, so every player gets the exact
+    same base."""
     w, d = CONFIG["plot_width"], CONFIG["plot_depth"]
     hw = w / 2.0
     rng = random.Random(CONFIG["seed"] * 100)
@@ -1708,39 +1906,56 @@ def build_plot_template(pal):
 
 
 def build_plots(world, pal, L, texts):
+    """The bases ("enclos" on the plan), in a column along the lobby's west side,
+    opening east onto the plaza, separated by marble walls."""
     sec = world.section("Plots")
     mb, local, signs = build_plot_template(pal)
     meshes = mb.make_meshes("PlotTemplate")
-    sh, d, hw = CONFIG["street_half"], CONFIG["plot_depth"], CONFIG["plot_width"] / 2.0
+    d, hw = CONFIG["plot_depth"], CONFIG["plot_width"] / 2.0
+    h, t = CONFIG["wall_height"], CONFIG["wall_thickness"]
+    sx, bx = L["street_x"], L["back_x"]
+
+    # Closest to the central avenue first: PlotService hands them out in this order.
+    order = sorted(range(CONFIG["base_count"]),
+                   key=lambda k: (abs(L["base_centers"][k]), -L["base_centers"][k]))
     anchors = []
-    for i, cx in enumerate(L["plot_centers"]):
-        for tag, side in (("N", 1), ("S", -1)):
-            pid = "%s%d" % (tag, i + 1)
-            f = Frame(cx, side * sh, 0.0 if side > 0 else math.pi)
-            name = "Plot_" + pid
-            sec.place(meshes, name, f)
-            register_colliders(mb, sec.name, f)
-            sec.text(texts["zone_sure"], name + "_SafeZoneText", f.p(0.0, 14.0, 0.3), (0, 0, f.r))
-            for key, pos in signs.items():
-                sec.text(texts[key], "%s_Sign_%s" % (name, key.title()), f.p(pos[0], pos[1], pos[2]),
-                         upright(f.r))
+    for rank, k in enumerate(order, start=1):
+        cy = L["base_centers"][k]
+        pid = "B%d" % rank
+        f = Frame(sx, cy, math.pi / 2.0)   # local +y (depth) runs west, into the base
+        name = "Plot_" + pid
+        sec.place(meshes, name, f)
+        register_colliders(mb, sec.name, f)
+        sec.text(texts["zone_sure"], name + "_SafeZoneText", f.p(0.0, 14.0, 0.3), (0, 0, f.r))
+        for key, pos in signs.items():
+            sec.text(texts[key], "%s_Sign_%s" % (name, key.title()), f.p(pos[0], pos[1], pos[2]),
+                     upright(f.r))
+        entry = {"id": pid, "side": "west", "zone": "lobby"}
+        for key in ("center", "entrance", "spawn", "machine", "sellStand", "shopStand",
+                    "conveyor", "house", "sign"):
+            p = local[key]
+            entry[key] = f.p(p[0], p[1], p[2])
+        entry["spawnYaw"] = facing_yaw(-1.0, 0.0)
+        entry["pens"] = [f.p(p[0], p[1], p[2]) for p in local["pens"]]
+        entry["bounds"] = ((sx - d, cy - hw, 0.0), (sx, cy + hw, h))
+        anchors.append(entry)
 
-            def P(point):
-                return f.p(point[0], point[1], point[2])
-
-            entry = {
-                "id": pid,
-                "side": "north" if side > 0 else "south",
-                "zone": BIOMES[min(i, len(BIOMES) - 2)]["id"],
-            }
-            for key in ("center", "entrance", "spawn", "machine", "sellStand", "shopStand",
-                        "conveyor", "house", "sign"):
-                entry[key] = P(local[key])
-            entry["spawnYaw"] = facing_yaw(0.0, float(side))
-            entry["pens"] = [P(p) for p in local["pens"]]
-            entry["bounds"] = ((cx - hw, side * sh, 0.0),
-                               (cx + hw, side * (sh + d), CONFIG["wall_height"]))
-            anchors.append(entry)
+    # Marble walls between the bases, and the back wall.
+    wb = MeshBuilder()
+    wall_a, wall_b, cap = pal["marble"], pal["marble_dark"], pal["gold"]
+    xm = (sx + bx) / 2.0
+    for wy_ in L["wall_centers"]:
+        wb.box((xm, wy_, h / 2.0), (d, t, h), wall_a, solid=True)
+        wb.box((xm, wy_, h + 1.0), (d + 1.5, t + 1.5, 2.0), cap)
+        wb.checker_xz(wy_ - t / 2.0 - 0.2, bx, 0.0, sx, h, CONFIG["tile"], wall_a, wall_b, facing=-1)
+        wb.checker_xz(wy_ + t / 2.0 + 0.2, bx, 0.0, sx, h, CONFIG["tile"], wall_b, wall_a, facing=1)
+        wb.checker_yz(sx + 0.2, wy_ - t / 2.0, 0.0, wy_ + t / 2.0, h, CONFIG["tile"],
+                      wall_a, wall_b, facing=1)
+        wb.sphere((sx - 2.0, wy_, h + 4.0), 2.4, pal["glow_violet"], rings=4, segments=8)
+    span = L["col_span"]
+    wb.box((bx - 3.0, 0.0, h / 2.0), (6.0, span, h), wall_a, solid=True)
+    wb.box((bx - 3.0, 0.0, h + 1.05), (7.5, span, 2.1), cap)
+    sec.emit(wb, "Plots_Walls")
     return anchors
 
 
@@ -1753,20 +1968,11 @@ def build_ref_markers(world, pal):
 
 
 def build_island_barriers(L):
-    """Invisible walls: island edge (open at the bridge) and the scenery margins
-    behind the plot rows, which are decor only."""
-    ix0, ix1, iy = L["island_x_min"], L["island_x_max"], L["island_y"]
-    bh = CONFIG["bridge_half"]
-    barrier("Island", ix0, iy + 1.0, ix1, iy + 1.0)
-    barrier("Island", ix0, -iy - 1.0, ix1, -iy - 1.0)
-    barrier("Island", ix1 + 1.0, -iy, ix1 + 1.0, iy)
-    barrier("Island", ix0 - 1.0, bh, ix0 - 1.0, iy)
-    barrier("Island", ix0 - 1.0, -iy, ix0 - 1.0, -bh)
-    east = L["row_x1"] + CONFIG["wall_thickness"]
-    for side in (1, -1):
-        y_a, y_b = side * CONFIG["street_half"] + side * CONFIG["plot_depth"], side * iy
-        barrier("Island", L["row_x0"], y_a, L["row_x0"], y_b)
-        barrier("Island", east, y_a, east, y_b)
+    """Invisible walls around the corridor island. Its scenery strips are
+    already sealed by the corridor walls; these catch anything that gets over."""
+    iy, x1 = L["island_y"], L["corridor_len"]
+    barrier("Island", 0.0, iy + 1.0, x1, iy + 1.0)
+    barrier("Island", 0.0, -iy - 1.0, x1, -iy - 1.0)
 
 
 # ---------------------------------------------------------------- LUA EXPORT
@@ -1881,9 +2087,9 @@ def portal_entry(p):
 
 def write_map_data(filepath, L, lobby, zones, plots):
     """Emit src/Shared/MapData.lua so gameplay code never hardcodes a position."""
-    sh = CONFIG["street_half"]
+    ch = L["corridor_half"]
     iy = L["island_y"]
-    lane = sh - 16.0
+    lane = ch - 24.0
 
     tables = {}
     tables["reference"] = {
@@ -1892,10 +2098,10 @@ def write_map_data(filepath, L, lobby, zones, plots):
         "axisY": V3(REF_MARKERS["REF_AxisY"]),
         "markerSize": REF_SIZE,
     }
-    tables["island"] = bounds((L["island_x_min"], iy, -CONFIG["dirt_depth"]),
-                              (L["island_x_max"], -iy, 0.0))
-    tables["street"] = dict(bounds((L["island_x_min"], sh, 0.0), (L["desert_x0"], -sh, 0.0)),
-                            width=sh * 2.0)
+    tables["island"] = bounds((L["lobby_x0"], L["lobby_half"], -CONFIG["dirt_depth"]),
+                              (L["corridor_len"], -L["lobby_half"], 0.0))
+    tables["corridor"] = dict(bounds((0.0, ch, 0.0), (L["corridor_len"], -ch, 0.0)),
+                              width=ch * 2.0)
     tables["lobby"] = {
         "id": "lobby",
         "label": "Lobby",
@@ -1917,12 +2123,14 @@ def write_map_data(filepath, L, lobby, zones, plots):
             "height": lobby["tutorialBoard"]["height"],
             "yaw": Num(lobby["tutorialBoard"]["yaw"]),
         },
-        "shop": V3(lobby["shop"]),
+        "shop": {"position": V3(lobby["shop"]["position"]), "yaw": Num(lobby["shop"]["yaw"])},
+        "speedShop": {"position": V3(lobby["speedShop"]["position"]),
+                      "yaw": Num(lobby["speedShop"]["yaw"])},
         "dailyReward": V3(lobby["dailyReward"]),
+        "statue": V3(lobby["statue"]),
         "showcase": [{"rarity": s["rarity"], "position": V3(s["position"])}
                      for s in lobby["showcase"]],
     }
-    tables["bridge"] = bounds(*lobby["bridge"])
 
     zone_rows = []
     for z in zones:
@@ -1944,7 +2152,7 @@ def write_map_data(filepath, L, lobby, zones, plots):
     portals += [portal_entry(z["returnPortal"]) for z in zones if z["returnPortal"]]
     tables["portals"] = portals
 
-    tables["capsuleZone"] = bounds((L["row_x0"], lane, 0.0), (L["row_x1"], -lane, 0.0))
+    tables["capsuleZone"] = bounds((0.0, lane, 0.0), (L["ring_x"], -lane, 0.0))
     tables["bossAltar"] = {
         "center": V3((L["arena_x"], 0.0, 0.0)),
         "top": V3((L["arena_x"], 0.0, 9.1)),
@@ -1974,13 +2182,13 @@ def write_map_data(filepath, L, lobby, zones, plots):
 
     notes = {
         "reference": "Alignment markers baked into the GLB (see MapService).",
-        "lobby": "Spawn island. `index` 0 so it sorts before the corridor zones.",
+        "lobby": "The bar of the T: spawns, portals, shops, bases. `index` 0 sorts it first.",
         "zones": "Corridor zones in walking order. `index` grows with the distance from the\n"
                  "-- lobby, so it doubles as a difficulty / reward tier.",
         "portals": "Teleport triggers. target = \"base\", \"lobby\" or \"zone:<id>\".\n"
                    "-- position/size/yaw describe the trigger box (CFrame.Angles(0, yaw, 0)).",
-        "capsuleZone": "Legacy: the street lane across the plot rows. Prefer zones[i].capsuleArea.",
-        "plots": "Player bases (\"cases\"). Ids N1..N4 (north row) and S1..S4 (south row).",
+        "capsuleZone": "Legacy: the whole corridor lane. Prefer zones[i].capsuleArea.",
+        "plots": "Player bases (\"enclos\") on the lobby's west side, B1 closest to the avenue.",
         "materials": "Roblox look per material key: MeshPart names end in \"__<key>\".",
     }
 
@@ -2163,8 +2371,8 @@ def run_checks(L, lobby, zones, plots, world):
     # Zones are contiguous and cover the island exactly.
     segs = biome_segments(L)
     gaps = [(a[1], b[0]) for a, b in zip(segs, segs[1:]) if abs(a[1] - b[0]) > 1e-6]
-    check("zones_contiguous", not gaps and segs[0][0] == L["island_x_min"]
-          and segs[-1][1] == L["island_x_max"], str(gaps))
+    check("zones_contiguous", not gaps and segs[0][0] == L["lobby_x1"]
+          and segs[-1][1] == L["corridor_len"], str(gaps))
 
     # Every place a character is put down stands on ground and is clear of walls.
     standing = [("lobby_spawn_%d" % i, p) for i, p in enumerate(lobby["spawns"])]
@@ -2196,12 +2404,11 @@ def run_checks(L, lobby, zones, plots, world):
         check("capsules_%s_clear" % z["biome"]["id"], not hits,
               str([(h["section"], h["center"]) for h in hits][:3]))
 
-    # Plots sit inside the zone they are attributed to.
+    # Bases sit inside the lobby.
+    (lx0, ly0, _), (lx1, ly1, _) = lobby["bounds"]
     for p in plots:
-        zone = next(z for z in zones if z["biome"]["id"] == p["zone"])
-        (px0, _, _), (px1, _, _) = p["bounds"]
-        (zx0, _, _), (zx1, _, _) = zone["bounds"]
-        check("plot_%s_in_zone" % p["id"], zx0 <= min(px0, px1) and max(px0, px1) <= zx1)
+        (px0, py0, _), (px1, py1, _) = p["bounds"]
+        check("plot_%s_in_lobby" % p["id"], lx0 <= px0 < px1 <= lx1 and ly0 <= py0 < py1 <= ly1)
 
     # Mesh budget and naming contract of every exported object.
     worst = 0
@@ -2395,8 +2602,7 @@ def main():
     for index, (x0, x1, _) in enumerate(segments, start=1):
         ax0, ay0, ax1, ay1 = capsule_area(L, index, x0, x1)
         keep_out(ax0 - 2.0, ay0 - 2.0, ax1 + 2.0, ay1 + 2.0)
-    keep_out(L["island_x_min"], -CONFIG["street_half"] + 12.0, L["desert_x0"],
-             CONFIG["street_half"] - 12.0)
+    keep_out(0.0, -L["corridor_half"] + 20.0, L["corridor_len"], L["corridor_half"] - 20.0)
 
     lobby = build_lobby(world, pal, L, texts)
     build_island_base(world, pal, L)
@@ -2409,18 +2615,21 @@ def main():
     rig = new_collection("Rig")
     build_world_sky()
     build_lights(rig)
-    mid_x = (L["lobby_x0"] + L["island_x_max"]) / 2.0
+    mid_x = (L["lobby_x0"] + L["corridor_len"]) / 2.0
+    pcx, b1 = L["plaza_cx"], L["base_centers"][len(L["base_centers"]) // 2]
     cams = {
-        "aerial": add_camera("Cam_Aerial", (mid_x - 700.0, -1050.0, 760.0),
-                             (mid_x + 40.0, 0.0, -20.0), rig, lens=32.0),
-        "lobby": add_camera("Cam_Lobby", (L["lobby_cx"] + 70.0, -175.0, 105.0),
-                            (L["lobby_cx"] - 5.0, 18.0, 6.0), rig, lens=30.0),
-        "street": add_camera("Cam_Street", (L["island_x_min"] + 8.0, 0.0, 22.0),
-                             (L["row_x1"] + 180.0, 0.0, 26.0), rig, lens=28.0),
-        "plot": add_camera("Cam_Plot", (L["plot_centers"][1] - 150.0, -60.0, 175.0),
-                           (L["plot_centers"][1], CONFIG["street_half"] + 62.0, 6.0), rig, lens=40.0),
-        "boss": add_camera("Cam_Boss", (L["desert_x0"] - 30.0, -150.0, 120.0),
-                           (L["arena_x"] + 10.0, 10.0, 18.0), rig, lens=30.0),
+        "aerial": add_camera("Cam_Aerial", (mid_x - 760.0, -1150.0, 900.0),
+                             (mid_x + 30.0, 0.0, -30.0), rig, lens=32.0),
+        "lobby": add_camera("Cam_Lobby", (60.0, -260.0, 150.0),
+                            (pcx - 10.0, 20.0, 10.0), rig, lens=26.0),
+        "statue": add_camera("Cam_Statue", (-30.0, -24.0, 14.0),
+                             (pcx, 0.0, 52.0), rig, lens=26.0),
+        "street": add_camera("Cam_Street", (-60.0, 0.0, 14.0),
+                             (L["corridor_len"], 0.0, 30.0), rig, lens=28.0),
+        "plot": add_camera("Cam_Plot", (L["street_x"] + 110.0, b1 - 120.0, 120.0),
+                           (L["street_x"] - 60.0, b1, 0.0), rig, lens=36.0),
+        "boss": add_camera("Cam_Boss", (L["ring_x"] - 40.0, -60.0, 90.0),
+                           (L["arena_x"], 0.0, 20.0), rig, lens=30.0),
     }
     setup_render()
 

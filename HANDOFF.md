@@ -79,10 +79,14 @@ Un GLB importé tel quel ne suffit pas. Le contrat entre `build_map.py` et
   caméra continue de les éviter.
 - **Trois repères `REF_*`** enfouis sous l'île : MapService recale échelle,
   rotation et position du modèle importé, où qu'il ait atterri.
-- **Les 8 bases sont un seul modèle instancié** (même mesh, 8 placements) :
-  équité entre joueurs, et 8 fois moins de meshes à importer.
-- **Le lobby est une île séparée** reliée par un pont, avec un portail par zone.
-  Les marges derrière les bases sont du décor pur, fermées par des barrières.
+- **Les bases sont un seul modèle instancié** (même mesh, N placements) :
+  équité entre joueurs, et N fois moins de meshes à importer.
+- **Plan en T** (décidé par l'utilisateur sur croquis, 26/09/2026,
+  `assets/map/plan_reference.png`) : le lobby est la barre du T et contient
+  les 4 bases (« enclos » sur le croquis) et deux boutiques à l'entrée du
+  couloir (BOUTIQUE / VENTE, et VITESSE : « move speed » sur le croquis) ; le
+  couloir des zones 1 → 5 est la tige. L'ancienne île à rue centrale avec 8
+  bases dans les zones est abandonnée.
 
 ---
 
@@ -154,8 +158,8 @@ Deux conséquences qui ont déjà produit des bugs :
 ### Limite Roblox : 10 000 triangles par MeshPart
 
 `build_map.py` affiche `MESH_BUDGET` à chaque exécution et découpe tout seul un
-objet au-delà de 9 500 triangles. État actuel : 303 objets, 87 320 triangles,
-max 1 440.
+objet au-delà de 9 500 triangles. État actuel : 217 objets, 86 656 triangles,
+max 4 148.
 
 ### Nommer aussi les meshes, pas seulement les objets
 
@@ -212,8 +216,8 @@ qu'on ne lui ajoute pas l'accès.
 
 ## 6. Où en est le projet
 
-**La map et les systèmes sont reliés** (26/09/2026) : lobby + pont + 5 zones +
-8 bases + arène générés par `build_map.py`, rendus jouables par `MapService`
+**La map et les systèmes sont reliés** (26/09/2026) : map en T (lobby + 4 bases
++ 5 zones + arène) générée par `build_map.py`, rendus jouables par `MapService`
 (recalage, couleurs, collisions, spawns, portails), `PlotService` attribue les
 bases, `CapsuleService` fait apparaître les capsules dans les zones, le client
 affiche le nom de la zone. Tout est vérifié par mesure sauf l'import dans Studio
