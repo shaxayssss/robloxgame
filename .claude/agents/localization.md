@@ -48,7 +48,8 @@ Aucune table de traduction. Les textes sont ecrits en dur dans
 
 ### Le piege specifique a ce projet
 
-Les textes de la map — « ZONE SURE », « VENDRE », « BOUTIQUE » — ne sont **pas**
+Les textes de la map — « ZONE SURE », « VENDRE », « BOUTIQUE », noms des zones,
+etiquettes des portails, panneaux du lobby — ne sont **pas**
 des GUI : ce sont des **maillages 3D cuits dans le fichier de la map** par
 `blender/build_map.py`. On ne peut pas les traduire a l'execution.
 

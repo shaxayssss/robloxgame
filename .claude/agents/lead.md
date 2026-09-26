@@ -54,23 +54,24 @@ Code et commentaires en **anglais**.
 
 ### Ou en est le projet
 
-Les 8 systemes serveur existent (`PlayerDataService`, `CapsuleService`,
-`HatchService`, `IncomeService`, `StealService`, `BaseService`), la map est
-generee et `src/Shared/MapData.lua` expose ses ancres. **Mais les deux moities
-ne se parlent pas encore** : aucun service ne lit `MapData`.
+Les systemes serveur existent et **sont relies a la map** : `MapService`
+(recalage du GLB, collisions, spawns, portails), `PlotService` (une base par
+joueur), `CapsuleService` (capsules dans les zones). La map (lobby + 5 zones +
+8 bases + arene) est generee par `blender/build_map.py`. Guide : `MAPS.md`.
 
-C'est la priorite, et elle se decoupe en trois taches dans cet ordre :
+Prochaines taches, dans cet ordre :
 
 | # | Tache | Agent | Depend de |
 |---|---|---|---|
-| 1 | `PlotService` : assigner un plot par joueur, spawn sur `plot.spawn` | `gameplay` | — |
-| 2 | `CapsuleService` : spawn dans `MapData.capsuleZone` au lieu de l'origine | `gameplay` | 1 |
-| 3 | Vol par `ProximityPrompt` sur `plot.house` au lieu de la liste d'UI | `gameplay` + `gui` | 1 |
+| 1 | Importer le GLB dans Studio, verifier les lignes `MapService:` de l'Output | `map` | — |
+| 2 | Vol par `ProximityPrompt` sur `plot.house` au lieu de la liste d'UI | `gameplay` + `gui` | 1 |
+| 3 | Kaijus visibles sur les socles des enclos (`plot.pens`) | `gameplay` + `art` | 1 |
 
 ### Pieges de delegation propres a ce projet
 
-- **Ne laisse personne editer `src/Shared/MapData.lua`** : il est genere par
-  `blender/build_map.py` et sera ecrase. Une demande qui veut bouger un element
+- **Ne laisse personne editer `src/Shared/MapData.lua` ni
+  `src/Server/MapColliders.lua`** : ils sont generes par
+  `blender/build_map.py` et seront ecrases. Une demande qui veut bouger un element
   de la map va a `map`, qui modifie le script Blender.
 - Un changement de map **invalide les positions** : si `map` regenere, previens
   `gameplay` que les ancres ont bouge.

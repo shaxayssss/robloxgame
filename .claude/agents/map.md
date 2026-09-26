@@ -62,6 +62,16 @@ la liste `BIOMES` de `build_map.py` et documentées dans `ZONES.md`. Deux règle
   s'il existe un trou entre deux zones. Après toute modification de `BIOMES` ou
   de `plots_per_side`, vérifie les `bounds` générés dans `MapData.lua`.
 
+## Le contrat avec Roblox (lis `MAPS.md`)
+
+- **Une matière par objet**, nommé `<Nom>__<clé>` avec une clé de `PALETTE` :
+  `MapService` en tire la couleur et la matière Roblox.
+- **Tout ce qui doit bloquer un joueur** est déclaré solide (`solid=True` ou
+  `mb.collider(...)`) : les meshes ne collisionnent jamais en jeu, seuls les
+  volumes de `MapColliders.lua` le font.
+- Ne déplace pas les repères `REF_*` sans raison : ils servent au recalage.
+- Relance le script et exige `CHECKS ... failed=0` avant de livrer.
+
 Le skill `zone-generation` décrit une génération zone-par-zone via MCP : elle ne
 s'applique **pas** à ce couloir (des segments qui se raccordent au stud près ne
 peuvent pas sortir d'un générateur par IA).

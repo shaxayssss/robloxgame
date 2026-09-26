@@ -62,6 +62,28 @@ rendrait la map illisible.
 
 Ne supprime pas l'un en croyant qu'il double l'autre.
 
+### Le GLB n'est jouable qu'avec `MapService` (décidé le 26/09/2026)
+
+Un GLB importé tel quel ne suffit pas. Le contrat entre `build_map.py` et
+`src/Server/MapService.lua` (détails dans `MAPS.md`) :
+
+- **Une matière par objet**, nommé `<Nom>__<clé>`. MapService applique la
+  couleur et la matière Roblox de `MapData.materials[clé]` (Neon pour tout ce
+  qui brille). Raison : on ne sait pas ce que l'importateur fait d'un mesh
+  multi-matières, et l'émission glTF n'a pas d'équivalent Roblox hors Neon.
+- **Les collisions ne viennent jamais des meshes.** `build_map.py` liste chaque
+  sol, mur et prop solide dans `MapColliders.lua` ; MapService en fait des parts
+  invisibles. Raison : la collision que Roblox calcule sur un gros mesh fusionné
+  est approximative, et `CollisionFidelity` ne se change pas à l'exécution. Les
+  meshes restent `CanCollide` dans un groupe qui ne touche rien, pour que la
+  caméra continue de les éviter.
+- **Trois repères `REF_*`** enfouis sous l'île : MapService recale échelle,
+  rotation et position du modèle importé, où qu'il ait atterri.
+- **Les 8 bases sont un seul modèle instancié** (même mesh, 8 placements) :
+  équité entre joueurs, et 8 fois moins de meshes à importer.
+- **Le lobby est une île séparée** reliée par un pont, avec un portail par zone.
+  Les marges derrière les bases sont du décor pur, fermées par des barrières.
+
 ---
 
 ## 3. Ce qui a été essayé et n'a pas marché
@@ -127,12 +149,27 @@ Deux conséquences qui ont déjà produit des bugs :
    ailleurs que le mesh auquel elle appartient.
 2. **La conversion retourne l'axe Y**, donc une paire de coins n'est plus triée
    après conversion. Les `bounds` doivent être re-triés composante par
-   composante (`_bounds()`), sinon tout test d'appartenance échoue en silence.
+   composante (`bounds()`), sinon tout test d'appartenance échoue en silence.
 
 ### Limite Roblox : 10 000 triangles par MeshPart
 
-`build_map.py` affiche `MESH_BUDGET` à chaque exécution et signale tout objet
-au-dessus. État actuel : 38 objets, ~92 600 triangles, max ~7 300.
+`build_map.py` affiche `MESH_BUDGET` à chaque exécution et découpe tout seul un
+objet au-delà de 9 500 triangles. État actuel : 303 objets, 87 320 triangles,
+max 1 440.
+
+### Nommer aussi les meshes, pas seulement les objets
+
+On ne sait pas si l'importateur Roblox nomme les MeshParts d'après l'objet ou
+d'après le mesh. Les deux portent donc la clé de matière (`Text_vendre__text_decal`).
+Un test l'a attrapé : les meshes de texte s'appelaient `Text_vendre` et
+n'auraient pas eu de couleur si l'importateur prend le nom du mesh.
+
+### EEVEE : identifiant qui change, et pas de rendu sans GPU
+
+Le moteur s'appelle `BLENDER_EEVEE` en 5.x mais `BLENDER_EEVEE_NEXT` en 4.2-4.5.
+`pick_render_engine()` essaie les deux. Sur une machine sans GPU, EEVEE ne rend
+pas : `KAIJU_RENDER_ENGINE=CYCLES`. `Material.use_nodes` / `World.use_nodes`
+sont dépréciés en 5.0 (toujours actifs) : le script n'y touche qu'avant 5.0.
 
 ### `ensure_active_object()` et les entrées nulles
 
@@ -175,14 +212,18 @@ qu'on ne lui ajoute pas l'accès.
 
 ## 6. Où en est le projet
 
-**Les systèmes et la map existent, mais ne se parlent pas encore.** Aucun service
-ne lit `MapData.lua`. C'est LA priorité.
+**La map et les systèmes sont reliés** (26/09/2026) : lobby + pont + 5 zones +
+8 bases + arène générés par `build_map.py`, rendus jouables par `MapService`
+(recalage, couleurs, collisions, spawns, portails), `PlotService` attribue les
+bases, `CapsuleService` fait apparaître les capsules dans les zones, le client
+affiche le nom de la zone. Tout est vérifié par mesure sauf l'import dans Studio
+lui-même (voir `MAPS.md` §6).
 
 | # | Tâche | Dépend de |
 |---|---|---|
-| 1 | `PlotService` : assigner un des 8 plots par joueur, spawn sur `plot.spawn` | — |
-| 2 | `CapsuleService` : spawn dans `MapData.capsuleZone` au lieu de l'origine | 1 |
-| 3 | Vol par `ProximityPrompt` sur `plot.house` au lieu de la liste d'UI | 1 |
+| 1 | Importer le GLB dans Studio et vérifier les lignes `MapService:` de l'Output | — |
+| 2 | Vol par `ProximityPrompt` sur `plot.house` au lieu de la liste d'UI | 1 |
+| 3 | Kaijus visibles sur les socles (`MapData.plots[i].pens`) | 1 |
 
 ### Dettes connues
 
@@ -193,15 +234,15 @@ ne lit `MapData.lua`. C'est LA priorité.
   réseau peut faire écraser une vraie sauvegarde au prochain autosave. À traiter
   avant toute sortie publique.
 - **Aucun anti-spam sur les remotes** — un client peut marteler `RequestHatch`.
-- `StreamingEnabled`, `CanCollide`/`CanQuery` et les tags `CollectionService`
-  restent à régler dans Studio après import.
+- `StreamingEnabled` reste à régler dans Studio (`CanCollide`/`CanQuery` sont
+  gérés par `MapService`).
 
 ---
 
 ## 7. Comment reprendre
 
 ```bash
-# Régénérer la map (île + biomes + MapData.lua)
+# Régénérer la map (lobby + zones + bases + MapData.lua + MapColliders.lua)
 "/c/Program Files/Blender Foundation/Blender 5.2/blender.exe" -b --python "KaijuHeist/blender/build_map.py"
 
 # Régénérer les 5 zones autonomes
@@ -212,7 +253,8 @@ cd KaijuHeist && rojo serve
 ```
 
 **Fichiers générés — ne jamais éditer à la main :**
-`KaijuHeist/src/Shared/MapData.lua`, `assets/map/*.blend`, `assets/map/*.glb`,
+`KaijuHeist/src/Shared/MapData.lua`, `KaijuHeist/src/Server/MapColliders.lua`,
+`assets/map/*.blend`, `assets/map/*.glb`, `assets/map/sections/*.glb`,
 `assets/zones/*.glb`.
 
 Crédits MCP restants au moment de l'export : **5**.

@@ -22,6 +22,7 @@ import math
 import os
 import random
 import sys
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -30,6 +31,7 @@ from build_map import (  # noqa: E402  - path must be set first
     export_glb,
     make_material,
     new_collection,
+    pick_render_engine,
     reset_scene,
 )
 
@@ -262,15 +264,21 @@ DECOR = {
 
 
 def build_zone(zone, collection, offset_y=0.0, seed_bump=0):
-    """Build one zone into `collection`; offset_y chains segments for the proof shot."""
+    """Build one zone into `collection`; offset_y chains segments for the proof shot.
+
+    One object per material ("<Zone>__<material>"), so every Roblox MeshPart
+    gets a single colour whatever the importer does with multi-material meshes.
+    The seed comes from crc32, not hash(): str hashes change on every run.
+    """
     pal = zone_palette(zone)
-    rng = random.Random(hash(zone["id"]) % 9999 + seed_bump)
+    rng = random.Random(zlib.crc32(zone["id"].encode()) % 9999 + seed_bump)
     mb = MeshBuilder()
     build_shell(mb, pal, zone)
     DECOR[zone["decor"]](mb, pal, rng)
-    obj = mb.build(zone["id"], collection)
-    obj.location = (0.0, offset_y, 0.0)
-    return obj
+    objs = mb.build_split(zone["id"], collection)
+    for obj in objs:
+        obj.location = (0.0, offset_y, 0.0)
+    return objs
 
 
 # ---------------------------------------------------------------- SCENE
@@ -318,7 +326,7 @@ def setup_scene(bounds_center, span, top_down=False):
 
     scene = bpy.context.scene
     scene.camera = cam
-    scene.render.engine = "BLENDER_EEVEE"
+    pick_render_engine(scene)
     scene.render.resolution_x = 1280
     scene.render.resolution_y = 760
     scene.view_settings.view_transform = "Standard"
@@ -328,6 +336,8 @@ def setup_scene(bounds_center, span, top_down=False):
 
 
 def render_to(path):
+    if os.environ.get("KAIJU_SKIP_RENDER"):
+        return
     bpy.context.scene.render.filepath = path
     try:
         bpy.ops.render.render(write_still=True)

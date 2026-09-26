@@ -64,8 +64,12 @@ Règles :
 - Lancer la synchro : `rojo serve` depuis `KaijuHeist/`, puis « Connect » dans le
   plugin Rojo de Studio.
 
-⚠️ `src/Shared/MapData.lua` est **généré** par `blender/build_map.py`. Ne l'édite
-jamais à la main : il est écrasé à chaque génération de la map.
+⚠️ `src/Shared/MapData.lua` et `src/Server/MapColliders.lua` sont **générés** par
+`blender/build_map.py`. Ne les édite jamais à la main : ils sont écrasés à chaque
+génération de la map.
+
+La map elle-même (le GLB importé) vit dans `Workspace` de la place Studio, pas
+dans Rojo : après l'avoir importée, **enregistre la place**. Guide : `MAPS.md`.
 
 ## 🤖 Comment piloter les agents
 
@@ -88,10 +92,16 @@ La map est **générée par script**, pas modélisée à la main. Source unique 
 "/c/Program Files/Blender Foundation/Blender 5.2/blender.exe" -b --python "KaijuHeist/blender/build_map.py"
 ```
 
-- Sortie : `KaijuHeist/assets/map/kaiju_heist_map.blend` + `.glb` + 3 previews PNG.
-- Tout se règle dans le dict `CONFIG` en haut du script (nombre de plots, tailles,
-  hauteur des murs, damier). **Ne modifie jamais le `.blend` à la main** : il est
-  écrasé à chaque exécution. Modifie le script, puis relance.
+- Sortie : `KaijuHeist/assets/map/kaiju_heist_map.blend` + `.glb`, un GLB par
+  section dans `assets/map/sections/`, 5 previews PNG, plus `MapData.lua` et
+  `MapColliders.lua`. Le script s'auto-vérifie (`CHECKS passed=… failed=…`).
+- Tout se règle en haut du script : `CONFIG` (tailles), `BIOMES` (zones),
+  `PALETTE` (couleurs + matière Roblox). **Ne modifie jamais le `.blend` à la
+  main** : il est écrasé à chaque exécution. Modifie le script, puis relance.
+- Contrat avec Roblox (voir `MAPS.md`) : **une matière par objet**, nommé
+  `<Nom>__<clé>` ; les collisions sont des volumes invisibles listés dans
+  `MapColliders.lua`, jamais les meshes ; 3 repères `REF_*` permettent à
+  `MapService` de recaler le modèle importé.
 - Le script doit rester tolérant à la langue de Blender : accède aux nœuds par
   **type** et aux sockets par **identifier**, jamais par nom traduit
   (un Blender en français nomme le nœud `BSDF guidée`).
@@ -104,8 +114,9 @@ rend mal : skills `map-reference-analysis` puis `higgsfield-3d-assets`.
 ### Exigences Roblox (communes aux deux voies)
 
 - Échelle : 1 stud = 1 unité Blender.
-- **Limite dure : 10 000 triangles par MeshPart.** Découpe en plusieurs objets
-  si besoin (la map actuelle : 38 objets, 93 718 tris, max 7 584 par objet).
+- **Limite dure : 10 000 triangles par MeshPart.** Le script découpe tout seul
+  au-delà de 9 500 (la map actuelle : 303 objets, 87 320 tris, max 1 440 par
+  objet).
 - Textures PBR ≤ 1024×1024, couleurs fidèles à la référence.
 - Import Studio : onglet Avatar → **3D Importer** → sélectionner le `.glb`.
 
@@ -119,8 +130,9 @@ rend mal : skills `map-reference-analysis` puis `higgsfield-3d-assets`.
   **voler** l'Ichor des autres joueurs.
 - **Plateformes** : PC + Mobile + Console. Session cible ~15 min.
 - **Monétisation** : _(à définir — pas encore commencée)_
-- **Statut** : prototype. Systèmes et map existent mais **ne sont pas encore
-  reliés** (voir « Prochaine étape »).
+- **Statut** : prototype. La map (lobby + 5 zones + 8 bases + arène) est
+  générée et **reliée aux services** : spawn au lobby, portails, attribution des
+  bases, capsules dans les zones. Pas encore testée dans Studio (voir `MAPS.md` §6).
 
 ### Ce qui existe
 
@@ -134,43 +146,45 @@ rend mal : skills `map-reference-analysis` puis `higgsfield-3d-assets`.
 | Upgrades | `src/Server/BaseService.lua` | Base (revenu) + Garde (défense) |
 | Données partagées | `src/Shared/Constants.lua`, `KaijuDatabase.lua`, `Remotes.lua` | Équilibrage centralisé |
 | HUD | `src/Client/Main.client.lua` | Généré en code, fonctionnel mais brut |
-| Map | `blender/build_map.py` → `assets/map/` | Générée, non importée en jeu |
-| Ancres de map | `src/Shared/MapData.lua` (généré) | Prêt, pas encore consommé |
+| Bandeau de zone | `src/Client/ZoneBanner.lua` | Nom de la zone à l'entrée |
+| Map | `blender/build_map.py` → `assets/map/` | Lobby + 5 zones + 8 bases + arène, GLB prêt à importer |
+| Ancres de map | `src/Shared/MapData.lua` (généré) | Consommé par les services ci-dessous |
+| Collisions de map | `src/Server/MapColliders.lua` (généré) | 642 volumes invisibles |
+| Mise en jeu de la map | `src/Server/MapService.lua` | Recalage, couleurs, collisions, spawns, portails |
+| Bases | `src/Server/PlotService.lua` | 1 base par joueur, étiquette du propriétaire |
 
 ### La map en chiffres
 
-Île flottante ~**950 × 430 studs**. Rue centrale de 72 studs de large, bordée de
-**8 plots** (4 par côté) de 132 × 122 studs, séparés par des murs de 16
-d'épaisseur et 40 de haut. Plaza de spawn à une extrémité, autel de boss à
-l'autre. Par plot : 6 enclos, maison, stand VENDRE, stand BOUTIQUE, machine à
-éclore, tapis roulant, ligne « ZONE SÛRE ».
+**Lobby** (île de 220 × 220 : spawns, 6 portails, classement, vitrine des
+raretés, boutique, cadeau, tutoriel) relié par un **pont** de 70 studs à l'**île
+principale** de ~**867 × 430 studs**. Rue centrale de 72 studs de large, bordée
+de **8 bases** (4 par côté) de 132 × 122 studs, séparées par des murs de 16
+d'épaisseur et 40 de haut ; autel de boss au bout. Par base : 6 enclos, maison,
+stand VENDRE, stand BOUTIQUE, machine à éclore, tapis roulant, ligne
+« ZONE SÛRE ». Les 8 bases sont identiques (un seul modèle instancié).
 
 Le couloir traverse **5 biomes** — Verte → Lave → Glace → Pierre → Désert —
 définis dans la liste `BIOMES` de `build_map.py` et détaillés dans `ZONES.md`.
-Ils sont exposés au gameplay par `MapData.zones` / `MapData.GetZoneAt()`, où
-`index` croît avec la distance au spawn et sert de palier de difficulté.
+Ils sont exposés au gameplay par `MapData.zones` / `MapData.GetZoneAt()` /
+`MapData.GetAreaAt()` (lobby compris), où `index` croît avec la distance au
+lobby et sert de palier de difficulté. Chaque zone a son `spawn` (destination
+de portail) et sa `capsuleArea`.
 Les plots restent en herbe verte dans tous les biomes, pour rester lisibles.
 
 ### Prochaine étape (la vraie priorité)
 
-**Consommer `MapData.lua` dans les services.** Les coordonnées existent
-désormais, plus rien n'est à deviner. Il reste trois branchements :
-
-1. **Attribution de plot** — un nouveau `PlotService` assigne un des 8 plots
-   (`MapData.plots`) à chaque joueur qui rejoint, et le téléporte sur son
-   `plot.spawn`.
-2. **Capsules dans la rue** — `CapsuleService` fait aujourd'hui spawn les
-   capsules dans un rayon autour de l'origine. Remplacer par un tirage dans
-   `MapData.capsuleZone`.
-3. **Vol physique** — `StealService` cible les joueurs via une liste d'UI.
+1. **Tester l'import dans Studio** (`MAPS.md` §3) : c'est la seule partie de la
+   chaîne qui n'a pas pu être mesurée. Vérifier les deux lignes `MapService:`
+   de l'Output.
+2. **Vol physique** — `StealService` cible les joueurs via une liste d'UI.
    Remplacer par un `ProximityPrompt` posé sur `plot.house` du plot visé, en
    gardant la validation serveur existante (cooldown + défense).
+3. **Kaijus visibles** sur les socles des enclos (`MapData.plots[i].pens`).
 
 ### Dettes connues
 
 - Pas de tests, pas d'anti-cheat au-delà de la validation serveur de base.
-- Propriétés Roblox non gérées par Blender, à régler après import :
-  `StreamingEnabled`, `CanCollide` / `CanQuery` sur le décor, tags
-  `CollectionService` sur les éléments interactifs.
+- `StreamingEnabled` reste à activer dans Studio. (`CanCollide` / `CanQuery`
+  du décor sont désormais réglés par `MapService` au lancement.)
 
 _Mets à jour cette section à chaque étape majeure._

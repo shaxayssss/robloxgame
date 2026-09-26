@@ -4,7 +4,7 @@ local Constants = {}
 Constants.CAPSULE_SPAWN_INTERVAL = 6 -- seconds between world capsule spawns
 Constants.CAPSULE_MAX_IN_WORLD = 40
 Constants.CAPSULE_LIFETIME = 45 -- despawns if uncollected
-Constants.CAPSULE_SPAWN_RADIUS = 120 -- studs around world origin (0,0,0)
+-- Where capsules spawn comes from MapData.zones[i].capsuleArea (generated with the map).
 
 Constants.INCOME_TICK_SECONDS = 5
 

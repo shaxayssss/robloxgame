@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
 
 local Constants = require(ReplicatedStorage.Shared.Constants)
+local MapData = require(ReplicatedStorage.Shared.MapData)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local CapsuleService = {}
@@ -12,6 +13,7 @@ local CapsuleService = {}
 local remotes
 local capsuleFolder
 local liveCapsuleCount = 0
+local rng = Random.new()
 
 local function makeCapsulePart()
 	local part = Instance.new("Part")
@@ -34,13 +36,14 @@ local function makeCapsulePart()
 	return part
 end
 
+-- A random point in the capsule area of a random zone (the street lane, or the
+-- sand in front of the boss arena), clear of every wall and prop by construction.
 local function randomSpawnPosition()
-	local radius = Constants.CAPSULE_SPAWN_RADIUS
-	local angle = math.random() * math.pi * 2
-	local dist = math.sqrt(math.random()) * radius
-	local x = math.cos(angle) * dist
-	local z = math.sin(angle) * dist
-	return Vector3.new(x, 4, z)
+	local zone = MapData.zones[rng:NextInteger(1, #MapData.zones)]
+	local area = zone.capsuleArea
+	local x = rng:NextNumber(area.min.X, area.max.X)
+	local z = rng:NextNumber(area.min.Z, area.max.Z)
+	return Vector3.new(x, area.min.Y + 3, z), zone
 end
 
 local function onCapsuleTouched(part, hit)
@@ -73,7 +76,10 @@ local function spawnOneCapsule()
 	end
 
 	local part = makeCapsulePart()
-	part.Position = randomSpawnPosition()
+	local position, zone = randomSpawnPosition()
+	part.Position = position
+	-- Grows with the distance from the lobby: ready for zone-based rarity.
+	part:SetAttribute("ZoneIndex", zone.index)
 	part.Parent = capsuleFolder
 
 	liveCapsuleCount += 1

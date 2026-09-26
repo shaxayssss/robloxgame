@@ -45,14 +45,15 @@ Lis `CLAUDE.md` avant d'agir : il porte l'etat du projet, la boucle de jeu
 et surtout le **mapping Rojo** (ou ecrire les fichiers). Code et commentaires
 en **anglais**.
 
-### Etat : rien n'existe encore
+### Etat : un lobby, pas encore de tutoriel scripte
 
-Aucun tutoriel, aucune premiere experience scriptee. Un joueur qui rejoint
-arrive sur une map sans savoir quoi faire.
+Un joueur qui rejoint apparait dans le **lobby** (`MapData.lobby`) : un panneau
+COMMENT JOUER en 4 etapes (`MapData.lobby.tutorialBoard`), un portail MA BASE et
+un portail par zone. Aucune premiere experience scriptee au-dela de ca.
 
 ### Ce que le jeu demande de comprendre en 30 secondes
 
-1. Ramasser une capsule dans la rue (`MapData.capsuleZone`).
+1. Ramasser une capsule dans la rue (`MapData.zones[i].capsuleArea`).
 2. La faire eclore a la machine de son plot (`plot.machine`).
 3. Poser le kaiju dans un enclos, qui genere de l'Ichor tout seul.
 4. Depenser l'Ichor en upgrades.

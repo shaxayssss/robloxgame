@@ -9,6 +9,8 @@ local remotes = Remotes.Get()
 
 local player = Players.LocalPlayer
 
+require(script.Parent.ZoneBanner).Start()
+
 local state = {
 	ichor = 0,
 	capsules = 0,

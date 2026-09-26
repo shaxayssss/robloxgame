@@ -59,10 +59,17 @@ d'eux, pas un nouveau service.
   tout vit dans `src/Shared/Constants.lua`.
 - **Aucune position en dur.** Les coordonnees viennent de
   `src/Shared/MapData.lua` (genere depuis Blender) : `MapData.plots[i].spawn`,
-  `.machine`, `.pens`, `.bounds`, plus `MapData.capsuleZone`.
+  `.machine`, `.pens`, `.house`, `.bounds`, `MapData.zones[i].capsuleArea`,
+  `MapData.portals`, `MapData.lobby`.
+
+### Deja branche sur la map
+
+`MapService` (recalage du GLB, collisions, spawns du lobby, portails),
+`PlotService` (`GetPlot(player)`, `GetOwner(plotId)`, attribut joueur `PlotId`),
+`CapsuleService` (capsules dans `capsuleArea`, attribut `ZoneIndex`). Voir
+`MAPS.md`.
 
 ### Chantier en cours
 
-Un `PlotService` manque : il doit assigner un des 8 plots de `MapData.plots` a
-chaque joueur qui rejoint et le faire spawn sur `plot.spawn`. `CapsuleService`
-et `StealService` en dependent.
+Le vol physique : un `ProximityPrompt` sur `plot.house` du plot vise, qui
+appelle la validation existante de `StealService` (cooldown + defense).

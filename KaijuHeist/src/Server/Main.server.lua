@@ -6,6 +6,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
 
+local MapService = require(script.Parent.MapService)
+local PlotService = require(script.Parent.PlotService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 local CapsuleService = require(script.Parent.CapsuleService)
 local HatchService = require(script.Parent.HatchService)
@@ -16,6 +18,9 @@ local BaseService = require(script.Parent.BaseService)
 local remotes = Remotes.EnsureCreated()
 local remotesProxy = Remotes.Get()
 
+-- The map comes first: colliders, spawns and portals must exist before anyone spawns.
+MapService.Start(PlotService)
+PlotService.Start()
 CapsuleService.Start(remotesProxy)
 HatchService.Start(remotesProxy)
 IncomeService.Start(remotesProxy)

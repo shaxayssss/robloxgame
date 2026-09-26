@@ -55,8 +55,9 @@ Lis `CLAUDE.md` avant d'agir. Code et commentaires en **anglais**.
 Le style visuel est pose par la map : **low-poly blocky sature**, sols et murs
 en damier deux tons, ciel bleu nuit etoile, emissifs francs (vert, cyan, or,
 violet) sur les elements interactifs. La palette de reference est le dict
-`build_palette()` dans `blender/build_map.py` — reprends ces valeurs plutot que
-d'en inventer.
+`PALETTE` dans `blender/build_map.py` (couleurs sRGB, identiques a
+`MapData.materials` cote Roblox) — reprends ces valeurs plutot que d'en
+inventer.
 
 Les kaijus n'existent pas encore : `src/Shared/KaijuDatabase.lua` definit 9
 creatures (Sludgling a Starwyrm, 5 raretes) avec une simple couleur en guise de

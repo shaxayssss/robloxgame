@@ -98,7 +98,7 @@ sont celles du `CONFIG` du script — c'est la source de vérité.
 ### ZONES
 | # | Nom | Position | Dimensions | Contenu |
 |---|---|---|---|---|
-| 1 | Plaza de spawn | extrémité -X | 140 × 140 | fontaine, arche, podium de classement |
+| 1 | Lobby (île séparée) + pont | extrémité -X | 220 × 220, pont 70 × 32 | fontaine, spawns, portails, classement, boutique (ajouté après la spec, voir `MAPS.md`) |
 | 2 | Rue centrale | axe médian | ~590 × 72 | herbe damier, lampadaires, déco de bord |
 | 3 | Plots joueurs | 4 de chaque côté de la rue | 132 × 122 chacun | enclos, stands, machine |
 | 4 | Murs séparateurs | entre plots | 16 × 122 × 40 | terre damier, sommet herbeux |

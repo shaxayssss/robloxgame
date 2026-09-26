@@ -8,13 +8,16 @@
 
 ## 1. Le principe
 
-Le couloir central traverse **5 biomes** qui se suivent, du spawn vers le boss.
-Plus le joueur s'éloigne du spawn, plus la zone est hostile — c'est l'axe de
+Le couloir central traverse **5 biomes** qui se suivent, du lobby vers le boss.
+Plus le joueur s'éloigne du lobby, plus la zone est hostile — c'est l'axe de
 progression du jeu.
 
 ```
-Plaza de spawn → Verte → Lave → Glace → Pierre → Désert (autel du boss)
+Lobby → pont → Verte → Lave → Glace → Pierre → Désert (autel du boss)
 ```
+
+Le lobby est une île séparée (spawns, portails vers chaque zone, classement,
+boutique…) : voir `MAPS.md`, qui décrit toute la map et son import dans Roblox.
 
 **Les plots restent en herbe verte dans tous les biomes.** C'est délibéré : un
 joueur doit reconnaître une base d'un coup d'œil. Seuls le sol du couloir, les
@@ -103,11 +106,16 @@ Les coulées de lave traversent volontairement toute la largeur et touchent donc
 les murs latéraux : ça ne gêne pas le raccordement, qui ne dépend que des
 extrémités.
 
+Comme la map, chaque segment est exporté avec **une matière par objet**
+(`ZoneLave__lava`, `ZoneLave__wall`…) : chaque MeshPart Roblox a une seule
+couleur, quoi que fasse l'importateur des meshes multi-matières.
+
 ## 3. Les 5 zones
 
 Chaque bande couvre toute la largeur de l'île (430 studs) sur une longueur de
-**148 studs** (une cellule de plot), sauf la première (288 studs, elle absorbe
-la plaza de spawn) et le désert (203 studs).
+**148 studs** (une cellule de 2 bases), sauf la première (208 studs, elle
+absorbe la place d'entrée côté pont), la quatrième (160, elle va jusqu'au
+désert) et le désert (203 studs).
 
 | # | Zone | Sol | Murs | Liseré | Décor |
 |---|---|---|---|---|---|
@@ -121,6 +129,19 @@ Le liseré de lave et celui de glace sont **émissifs** : l'arête de l'île rou
 dans la zone volcanique et brille dans la zone glaciaire. C'est ce qui rend la
 progression lisible de loin, y compris en vue aérienne.
 
+Chaque zone a aussi :
+
+- un **portique** au-dessus de la rue, à son entrée, avec son nom en 3D et une
+  ligne lumineuse au sol dans sa couleur (la zone Verte a l'arche d'entrée) ;
+- un **repère géant** dans les marges derrière les bases : arbre géant et étang
+  (Verte), deux volcans (Lave), château de glace et cristaux (Glace), arche
+  rocheuse et éboulis (Pierre), deux pyramides à gradins (Désert) ;
+- un décor de bord de rue de plus en plus dense (16 → 28 props) : la richesse
+  croît avec la progression.
+
+Les marges derrière les bases sont du **décor pur** : des barrières invisibles
+empêchent d'y entrer. Le désert, lui, se parcourt librement.
+
 ---
 
 ## 4. Côté gameplay
@@ -129,18 +150,26 @@ progression lisible de loin, y compris en vue aérienne.
 
 ```lua
 MapData.zones               -- 5 entrées, contiguës, sans trou
--- { id = "lava", label = "Zone de Lave", index = 2,
---   bounds = { min = Vector3, max = Vector3 } }
+-- { id = "lava", label = "Zone de Lave", index = 2, section = "Zone2_Lave",
+--   color = Color3,                       -- couleur de la zone (bandeau, lueurs)
+--   bounds = { min = Vector3, max = Vector3 },
+--   spawn = Vector3, spawnYaw = number,   -- destination du portail de la zone
+--   capsuleArea = { min = Vector3, max = Vector3 } }  -- voie libre pour les capsules
 
-MapData.GetZoneAt(position) -- renvoie la zone contenant une position
+MapData.GetZoneAt(position)  -- zone contenant une position (nil hors de l'île)
+MapData.GetAreaAt(position)  -- idem, mais renvoie MapData.lobby sur le lobby et le pont
+MapData.GetZoneById("lava")
 ```
 
-`index` croît avec la distance au spawn : il sert directement de **palier de
-difficulté ou de récompense**. Exemples d'usages prévus :
+`index` croît avec la distance au lobby : il sert directement de **palier de
+difficulté ou de récompense**. Déjà branché :
 
-- faire varier la rareté des capsules selon `zone.index` ;
-- n'autoriser certains kaijus qu'à partir d'une zone donnée ;
-- afficher le nom de la zone quand le joueur en change.
+- `CapsuleService` fait apparaître les capsules dans `capsuleArea` et pose
+  l'attribut `ZoneIndex` sur chaque capsule (prêt pour une rareté par zone) ;
+- `ZoneBanner` (client) affiche le nom de la zone quand le joueur y entre ;
+- les portails du lobby téléportent sur `zone.spawn`.
+
+Idée encore libre : n'autoriser certains kaijus qu'à partir d'une zone donnée.
 
 ⚠️ Les zones sont **contiguës et sans trou** : `GetZoneAt` ne renvoie `nil` que
 hors de l'île. Si tu modifies `BIOMES` ou le nombre de plots, vérifie que c'est
@@ -150,12 +179,13 @@ toujours vrai.
 
 ## 5. Ajouter une zone
 
-1. Ajoute une entrée dans `BIOMES` (`build_map.py`), avec ses clés `floor`,
-   `wall`, `cap`, `rim`, `decor`.
+1. Ajoute une entrée dans `BIOMES` (`build_map.py`), avec ses clés `name`,
+   `label`, `sign`, `portal`, `floor`, `wall`, `cap`, `rim`, `glow`, `ground`,
+   `decor`, `street_props`, `margin_props`. Le lobby lui crée un portail tout
+   seul (au-delà de 6 portails, élargis `lobby_size`).
 2. Si le décor est d'un type nouveau, ajoute un `add_*` et branche-le dans
    `add_biome_decor()`.
-3. Augmente `CONFIG["plots_per_side"]` si tu veux une cellule de plus — sinon la
-   nouvelle zone ne sera pas affichée, seules les `plots_per_side` premières le
-   sont (plus le désert, toujours en dernier).
+3. Garde `CONFIG["plots_per_side"] == len(BIOMES) - 1` : chaque zone sauf le
+   désert (toujours en dernier) occupe une cellule de 2 bases.
 4. Relance le script et vérifie la ligne `MESH_BUDGET` : la limite Roblox est de
    **10 000 triangles par MeshPart**.
