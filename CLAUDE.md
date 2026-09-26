@@ -98,6 +98,8 @@ La map est **générée par script**, pas modélisée à la main. Source unique 
 - Tout se règle en haut du script : `CONFIG` (tailles), `BIOMES` (zones),
   `PALETTE` (couleurs + matière Roblox). **Ne modifie jamais le `.blend` à la
   main** : il est écrasé à chaque exécution. Modifie le script, puis relance.
+- Une pièce (ou un groupe) avec l'attribut `KeepStudioLook = true` garde la
+  couleur réglée dans Studio au lieu de la palette.
 - Contrat avec Roblox (voir `MAPS.md`) : **une matière par objet**, nommé
   `<Nom>__<clé>` ; les collisions sont des volumes invisibles listés dans
   `MapColliders.lua`, jamais les meshes ; 3 repères `REF_*` permettent à
@@ -152,6 +154,7 @@ rend mal : skills `map-reference-analysis` puis `higgsfield-3d-assets`.
 | Collisions de map | `src/Server/MapColliders.lua` (généré) | 501 volumes invisibles |
 | Mise en jeu de la map | `src/Server/MapService.lua` | Recalage, couleurs, collisions, spawns, portails |
 | Bases | `src/Server/PlotService.lua` | 1 base par joueur, étiquette du propriétaire |
+| Assets UI | `tools/build_ui_assets.py` → `assets/ui/` | 90 PNG style simulateur (boutons, tuiles, fenêtres, icônes, logo), voir `assets/ui/README.md` |
 
 ### La map en chiffres
 

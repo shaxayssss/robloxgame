@@ -162,6 +162,25 @@ Autres services branchés sur la map :
 
 ---
 
+### Garder tes propres réglages de couleur dans Studio
+
+Par défaut, `MapService` réapplique au lancement la couleur, la matière et la
+transparence de la palette Blender : une pièce repeinte dans Studio reprendrait
+sa couleur d'origine au Play. Pour garder ton réglage :
+
+1. sélectionne la pièce (MeshPart) — ou un Model / Folder au-dessus d'elle pour
+   en protéger tout un groupe ;
+2. Properties → *Attributes* → **+** → nom `KeepStudioLook`, type **boolean**,
+   coche-le.
+
+`MapService` laisse alors Color, Material et Transparency tels que tu les as
+réglés, et l'indique dans l'Output (`… keep their Studio look`). Les collisions,
+l'ancrage et le recalage restent gérés comme avant.
+
+⚠️ Réimporter le GLB crée de nouvelles pièces : les attributs posés sur
+l'ancienne map sont perdus. Pour un changement de couleur définitif, modifie
+plutôt `PALETTE` dans `build_map.py`.
+
 ## 5. Modifier la map
 
 Tout se règle en haut de `build_map.py` :

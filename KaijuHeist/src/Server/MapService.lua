@@ -127,8 +127,27 @@ local function registerVisualGroup()
 	end
 end
 
+-- Set this attribute (boolean, true) in Studio on a MeshPart, or on any Model /
+-- Folder above it, to keep the Color, Material and Transparency chosen in
+-- Studio instead of the Blender palette.
+local KEEP_LOOK_ATTRIBUTE = "KeepStudioLook"
+
+local function keepsStudioLook(part, model)
+	local node = part
+	while node do
+		if node:GetAttribute(KEEP_LOOK_ATTRIBUTE) == true then
+			return true
+		end
+		if node == model then
+			return false
+		end
+		node = node.Parent
+	end
+	return false
+end
+
 local function prepareVisuals(model)
-	local unknown = 0
+	local unknown, kept = 0, 0
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
 			part.Anchored = true
@@ -139,7 +158,9 @@ local function prepareVisuals(model)
 
 			local key = materialKey(part.Name)
 			local look = key and MapData.materials[key]
-			if look then
+			if key ~= "ref" and keepsStudioLook(part, model) then
+				kept += 1
+			elseif look then
 				-- Whatever the importer built from the glTF material is replaced by the palette.
 				local appearance = part:FindFirstChildOfClass("SurfaceAppearance")
 				if appearance then
@@ -160,6 +181,9 @@ local function prepareVisuals(model)
 	end
 	if unknown > 0 then
 		warn(("MapService: %d part(s) of %s have no known material key"):format(unknown, model.Name))
+	end
+	if kept > 0 then
+		print(("MapService: %d part(s) of %s keep their Studio look (%s)"):format(kept, model.Name, KEEP_LOOK_ATTRIBUTE))
 	end
 end
 
