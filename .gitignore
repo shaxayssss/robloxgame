@@ -1,1 +1,3 @@
 __pycache__/
+# Blender writes a backup of the previous .blend on every save
+*.blend1

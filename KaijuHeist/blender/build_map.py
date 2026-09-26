@@ -2428,8 +2428,12 @@ def main():
     bpy.ops.wm.save_as_mainfile(filepath=blend_path)
     print("SAVED_BLEND", blend_path)
 
+    # Only the map goes into the GLB: no cameras, lights or camera targets.
+    map_objects = [world.empty]
+    for sec in world.sections.values():
+        map_objects += [sec.empty] + sec.objects
     glb_path = os.path.join(OUT_DIR, "kaiju_heist_map.glb")
-    export_glb(glb_path)
+    export_glb(glb_path, map_objects)
     print("SAVED_GLB", glb_path)
 
     for stale in os.listdir(SECTIONS_DIR):
