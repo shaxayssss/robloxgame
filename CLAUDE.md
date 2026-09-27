@@ -195,3 +195,16 @@ Les bases restent en herbe verte, pour rester lisibles.
   du décor sont désormais réglés par `MapService` au lancement.)
 
 _Mets à jour cette section à chaque étape majeure._
+
+## 🧩 Autre projet dans ce dépôt : Brainrot Fighter
+
+`BrainrotFighter/` est un **jeu distinct** de Kaiju Heist (formule « Anime Fighters »
+en version brainrot : zones, mobs, Star). Il n'est pas synchronisé par Rojo : chaque
+zone est une **map de test autonome**, avec son générateur Blender, un FBX et un
+installeur Luau à coller dans la barre de commande de Studio.
+
+- `BrainrotFighter/Zone6_VoidBrainrot/` : zone 6 v2, terraformée (massifs de gemmes,
+  falaises, butte, belvédère) et vivante (LocalScript `MapLife`). Guide :
+  `BrainrotFighter/Zone6_VoidBrainrot/README.md`.
+- Repères d'orientation communs à toutes les zones : `Sol_Arene`, `Star_Socle`,
+  `Neon_arche`. L'installeur recale la map avec ces trois objets ; ne les renomme pas.
