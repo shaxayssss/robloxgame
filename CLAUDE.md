@@ -206,5 +206,12 @@ installeur Luau à coller dans la barre de commande de Studio.
 - `BrainrotFighter/Zone6_VoidBrainrot/` : zone 6 v2, terraformée (massifs de gemmes,
   falaises, butte, belvédère) et vivante (LocalScript `MapLife`). Guide :
   `BrainrotFighter/Zone6_VoidBrainrot/README.md`.
+- `BrainrotFighter/PirateIsland/` : île au trésor pirate (zone pas encore numérotée), une
+  seule île en 3 terrasses (plage de spawn, plateau de palmeraies, toit du fort = boss),
+  cratère du crâne au centre, mer en eau du terrain Roblox. Les blocs d'herbe sont calculés
+  à partir des chemins de sable (`PATHS`) ; les collisions invisibles suivent le relief.
+  Guide : `BrainrotFighter/PirateIsland/README.md`.
+- Les installeurs créent tous le même LocalScript `MapLife` (animation côté client) : garde
+  `MapLife.client.lua` identique d'une zone à l'autre.
 - Repères d'orientation communs à toutes les zones : `Sol_Arene`, `Star_Socle`,
   `Neon_arche`. L'installeur recale la map avec ces trois objets ; ne les renomme pas.
