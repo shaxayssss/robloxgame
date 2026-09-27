@@ -211,6 +211,13 @@ installeur Luau à coller dans la barre de commande de Studio.
   cratère du crâne au centre, mer en eau du terrain Roblox. Les blocs d'herbe sont calculés
   à partir des chemins de sable (`PATHS`) ; les collisions invisibles suivent le relief.
   Guide : `BrainrotFighter/PirateIsland/README.md`.
+- `BrainrotFighter/UI/` : **BrainrotUI**, l'interface du jeu (HUD, boutique, renaissance,
+  index, roue), construite entièrement en code, sans image. Serveur autoritaire : une clé
+  DataStore par joueur avec verrou de session, un seul `ProcessReceipt`, requêtes validées.
+  Source dans `src/` (arborescence Roblox, nommage Rojo) ; `build_installer.py` produit
+  `BrainrotUI_Install.lua`, à coller dans la barre de commande. Réglages dans
+  `UIConfig`. `tools/run_checks.py` fait tourner le vrai code dans un simulateur de l'API
+  Roblox (55 contrôles) et rend les aperçus. Guide : `BrainrotFighter/UI/README.md`.
 - Les installeurs créent tous le même LocalScript `MapLife` (animation côté client) : garde
   `MapLife.client.lua` identique d'une zone à l'autre.
 - Repères d'orientation communs à toutes les zones : `Sol_Arene`, `Star_Socle`,
