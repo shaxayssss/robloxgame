@@ -220,6 +220,10 @@ installeur Luau à coller dans la barre de commande de Studio.
   quelques milliers de caractères : tout gros installeur doit passer par un modèle `.rbxmx`. Réglages dans
   `UIConfig`. `tools/run_checks.py` fait tourner le vrai code dans un simulateur de l'API
   Roblox (55 contrôles) et rend les aperçus. Guide : `BrainrotFighter/UI/README.md`.
+- `BrainrotFighter/Items/CosmicEgg/` : œuf à collectionner (gacha / icône de pass), généré par
+  `cosmic_egg.py` (Blender, un seul MeshPart < 10 000 triangles, texture palette). Méthode en
+  deux étapes : étape 1 = blockout couleurs à faire valider, étape 2 = textures et shaders
+  finaux seulement après validation. Guide : `BrainrotFighter/Items/CosmicEgg/README.md`.
 - Les installeurs créent tous le même LocalScript `MapLife` (animation côté client) : garde
   `MapLife.client.lua` identique d'une zone à l'autre.
 - Repères d'orientation communs à toutes les zones : `Sol_Arene`, `Star_Socle`,
