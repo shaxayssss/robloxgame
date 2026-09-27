@@ -122,6 +122,15 @@ rend mal : skills `map-reference-analysis` puis `higgsfield-3d-assets`.
 - Textures PBR ≤ 1024×1024, couleurs fidèles à la référence.
 - Import Studio : onglet Avatar → **3D Importer** → sélectionner le `.glb`.
 
+## 🍝 Second projet — BRAINROT FIGHTER
+
+Jeu de combat/collection (formule Anime Fighters Simulator, univers « brainrot »).
+Tout vit dans `BrainrotFighter/` (le reste de ce fichier concerne Kaiju Heist).
+- Zone 1 « Spaghetti Beach » : `BrainrotFighter/blender/z1_spaghetti_beach.py`
+  génère le kit de décor (20 assets `Z1_*`, une couleur par mesh), l'aperçu de la
+  zone 800 × 800 et un **FBX par asset** (réglages Roblox). Guide :
+  `BrainrotFighter/README.md`. Pas encore importé dans Studio.
+
 ## 📋 État du projet — KAIJU HEIST
 
 - **Type de jeu** : simulateur de collection + vol PvP entre joueurs
