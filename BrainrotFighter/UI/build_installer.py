@@ -1,4 +1,10 @@
-"""Packs src/ into BrainrotUI_Install.lua, a script to paste into the Roblox Studio command bar.
+"""Builds the two installation files from src/:
+
+  BrainrotUI.rbxmx         model to insert in Studio (all the scripts, ~150 KB)
+  BrainrotUI_Install.lua   short command for the command bar: puts each piece in place
+
+The Studio command bar does not accept a script this large (it only kept the last few
+thousand characters), hence the model file + a short command.
 
     python BrainrotFighter/UI/build_installer.py
 
@@ -8,18 +14,14 @@ src/ mirrors the Roblox tree (Rojo naming):
   StarterPlayerScripts/BrainrotUIClient/        -> LocalScript (init.client.lua) + child ModuleScripts
 """
 import os
+from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src")
-OUT = os.path.join(HERE, "BrainrotUI_Install.lua")
-
-
-def long_string(text: str) -> str:
-    level = 1
-    while ("]" + "=" * level + "]") in text or ("[" + "=" * level + "[") in text:
-        level += 1
-    eq = "=" * level
-    return f"[{eq}[\n{text}]{eq}]"
+MODEL = os.path.join(HERE, "BrainrotUI.rbxmx")
+COMMAND = os.path.join(HERE, "BrainrotUI_Install.lua")
+PACK_NAME = "BrainrotUI_Install"
+COMMAND_LIMIT = 4000  # characters; stay well under what the command bar keeps
 
 
 def read(path: str) -> str:
@@ -27,174 +29,131 @@ def read(path: str) -> str:
         return handle.read()
 
 
-def scripts_in(folder: str):
-    """(name, class, source) for a folder: its init script first, then its modules."""
+class Model:
+    def __init__(self):
+        self.lines = []
+        self.next_ref = 0
+
+    def open(self, cls: str, name: str, source: str = None, disabled: bool = False, depth: int = 1):
+        pad = "\t" * depth
+        self.lines.append(f'{pad}<Item class="{cls}" referent="RBX{self.next_ref:04d}">')
+        self.next_ref += 1
+        self.lines.append(f"{pad}\t<Properties>")
+        self.lines.append(f'{pad}\t\t<string name="Name">{escape(name)}</string>')
+        if source is not None:
+            assert "]]>" not in source, "a source contains ]]>"
+            self.lines.append(f'{pad}\t\t<ProtectedString name="Source"><![CDATA[{source}]]></ProtectedString>')
+        if disabled:
+            self.lines.append(f'{pad}\t\t<bool name="Disabled">true</bool>')
+        self.lines.append(f"{pad}\t</Properties>")
+
+    def close(self, depth: int = 1):
+        self.lines.append("\t" * depth + "</Item>")
+
+
+def add_folder_of_scripts(model: Model, folder: str, name: str, depth: int, disabled: bool = False):
+    """A folder with an init.*.lua becomes that script, otherwise a Folder; files become ModuleScripts."""
     files = sorted(os.listdir(folder))
-    entries = []
-    for name in files:
-        if name.startswith("init."):
-            cls = "Script" if ".server." in name else "LocalScript" if ".client." in name else "ModuleScript"
-            entries.insert(0, ("", cls, read(os.path.join(folder, name))))
-    for name in files:
-        if name.endswith(".lua") and not name.startswith("init."):
-            entries.append((name[:-4], "ModuleScript", read(os.path.join(folder, name))))
-    return entries
+    init = [f for f in files if f.startswith("init.")]
+    if init:
+        cls = "Script" if ".server." in init[0] else "LocalScript" if ".client." in init[0] else "ModuleScript"
+        model.open(cls, name, read(os.path.join(folder, init[0])), disabled and cls == "Script", depth)
+    else:
+        model.open("Folder", name, depth=depth)
+    for file in files:
+        if file.endswith(".lua") and not file.startswith("init."):
+            model.open("ModuleScript", file[:-4], read(os.path.join(folder, file)), depth=depth + 1)
+            model.close(depth + 1)
+    model.close(depth)
 
 
-def table(entries) -> str:
-    rows = []
-    for name, cls, source in entries:
-        rows.append(f'\t{{ Name = "{name}", Class = "{cls}", Source = {long_string(source)} }},')
-    return "{\n" + "\n".join(rows) + "\n}"
+def build_model() -> str:
+    model = Model()
+    model.lines.append('<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" '
+                       'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+                       'xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">')
+    model.open("Folder", PACK_NAME)
+    add_folder_of_scripts(model, os.path.join(SRC, "ReplicatedStorage", "BrainrotUI"), "BrainrotUI", 2)
+    # the server script stays disabled while it sits in the Workspace; the command enables it
+    add_folder_of_scripts(model, os.path.join(SRC, "ServerScriptService", "BrainrotUIServer"), "BrainrotUIServer", 2, disabled=True)
+    add_folder_of_scripts(model, os.path.join(SRC, "StarterPlayerScripts", "BrainrotUIClient"), "BrainrotUIClient", 2)
+    model.close()
+    model.lines.append("</roblox>")
+    return "\n".join(model.lines) + "\n"
 
 
-shared = scripts_in(os.path.join(SRC, "ReplicatedStorage", "BrainrotUI"))
-server = scripts_in(os.path.join(SRC, "ServerScriptService", "BrainrotUIServer"))
-client = scripts_in(os.path.join(SRC, "StarterPlayerScripts", "BrainrotUIClient"))
-
-INSTALLER = r'''-- ============================================================================
--- BrainrotUI : installation dans Roblox Studio
--- 1. Mode édition (pas en Play).  2. Affichage > Barre de commande.
--- 3. Colle TOUT ce fichier dans la barre de commande, puis Entrée.
--- Relançable sans risque : les scripts sont remplacés, ta config est gardée.
---
--- Généré par build_installer.py depuis src/ : ne pas modifier à la main.
--- ============================================================================
-
--- true = remplace aussi UIConfig (tu perds tes IDs de produits et tes réglages)
-local OVERWRITE_CONFIG = false
-
-local SHARED = __SHARED__
-local SERVER = __SERVER__
-local CLIENT = __CLIENT__
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ServerScriptService = game:GetService("ServerScriptService")
-local StarterPlayer = game:GetService("StarterPlayer")
-local StarterGui = game:GetService("StarterGui")
-local ChangeHistoryService = game:GetService("ChangeHistoryService")
-
+COMMAND_SOURCE = r'''-- BrainrotUI : range le modèle BrainrotUI.rbxmx inséré dans le Workspace.
+-- Colle ce fichier dans la barre de commande (mode édition), puis Entrée.
+local OVERWRITE_CONFIG = false -- true = remplace aussi ta UIConfig
+local RS = game:GetService("ReplicatedStorage")
+local SSS = game:GetService("ServerScriptService")
+local SPS = game:GetService("StarterPlayer"):FindFirstChildOfClass("StarterPlayerScripts")
+local pack = workspace:FindFirstChild("__PACK__")
+if not pack then
+	warn("⚠️ Insère d'abord BrainrotUI.rbxmx : clic droit sur Workspace > Insérer depuis un fichier.")
+	return
+end
 print("----- Installation de BrainrotUI -----")
-local recording = nil
-pcall(function()
-	recording = ChangeHistoryService:TryBeginRecording("Install BrainrotUI")
-end)
-
-local function makeScript(entry, parent, fallbackName)
-	local instance = Instance.new(entry.Class)
-	instance.Name = if entry.Name ~= "" then entry.Name else fallbackName
-	instance.Source = entry.Source
-	instance.Parent = parent
-	return instance
-end
-
--- shared modules (config kept unless OVERWRITE_CONFIG)
-local sharedFolder = ReplicatedStorage:FindFirstChild("BrainrotUI")
-if not sharedFolder then
-	sharedFolder = Instance.new("Folder")
-	sharedFolder.Name = "BrainrotUI"
-	sharedFolder.Parent = ReplicatedStorage
-end
-local keptConfig = false
-for _, entry in SHARED do
-	local existing = sharedFolder:FindFirstChild(entry.Name)
-	if entry.Name == "UIConfig" and existing and not OVERWRITE_CONFIG then
-		keptConfig = true
-	else
-		if existing then
-			existing:Destroy()
-		end
-		makeScript(entry, sharedFolder, entry.Name)
+local shared, server, client = pack.BrainrotUI, pack.BrainrotUIServer, pack.BrainrotUIClient
+local old = RS:FindFirstChild("BrainrotUI")
+if old then
+	local config = old:FindFirstChild("UIConfig")
+	if config and not OVERWRITE_CONFIG then
+		shared.UIConfig:Destroy()
+		config.Parent = shared
+		print("✅ UIConfig conservée (tes réglages et tes IDs)")
 	end
+	old:Destroy()
 end
-print(if keptConfig then "✅ UIConfig conservée (tes réglages et tes IDs)" else "✅ UIConfig installée dans ReplicatedStorage.BrainrotUI")
-
--- server
-local oldServer = ServerScriptService:FindFirstChild("BrainrotUIServer")
-if oldServer then
-	oldServer:Destroy()
-end
-local serverScript = makeScript(SERVER[1], ServerScriptService, "BrainrotUIServer")
-for index = 2, #SERVER do
-	makeScript(SERVER[index], serverScript, "")
-end
-print("✅ Script serveur installé : ServerScriptService.BrainrotUIServer (" .. (#SERVER - 1) .. " modules)")
-
--- client
-local playerScripts = StarterPlayer:FindFirstChild("StarterPlayerScripts")
-local oldClient = playerScripts:FindFirstChild("BrainrotUIClient")
-if oldClient then
-	oldClient:Destroy()
-end
-local clientScript = makeScript(CLIENT[1], playerScripts, "BrainrotUIClient")
-for index = 2, #CLIENT do
-	makeScript(CLIENT[index], clientScript, "")
-end
-print("✅ Interface installée : StarterPlayerScripts.BrainrotUIClient (" .. (#CLIENT - 1) .. " modules)")
-
--- conflicts ------------------------------------------------------------------
-local ours = { sharedFolder, serverScript, clientScript }
-local function isOurs(instance)
-	for _, root in ours do
-		if instance == root or instance:IsDescendantOf(root) then
-			return true
-		end
-	end
-	return false
-end
-local receiptScripts = {}
-local searched = {}
-for _, serviceName in { "Workspace", "ServerScriptService", "ServerStorage", "ReplicatedStorage", "ReplicatedFirst", "StarterGui", "StarterPlayer", "StarterPack" } do
-	local ok, service = pcall(game.GetService, game, serviceName)
-	if ok and service then
-		for _, instance in service:GetDescendants() do
-			table.insert(searched, instance)
+shared.Parent = RS
+for _, parent in { SSS, SPS } do
+	for _, name in { "BrainrotUIServer", "BrainrotUIClient" } do
+		local previous = parent:FindFirstChild(name)
+		if previous then
+			previous:Destroy()
 		end
 	end
 end
-for _, instance in searched do
-	if instance:IsA("LuaSourceContainer") and not isOurs(instance) then
-		local readOk, source = pcall(function()
-			return (instance :: any).Source
-		end)
-		if readOk and type(source) == "string" and string.find(source, "ProcessReceipt", 1, true) then
-			table.insert(receiptScripts, instance:GetFullName())
+server.Parent = SSS
+server.Enabled = true
+client.Parent = SPS
+pack:Destroy()
+print("✅ ReplicatedStorage.BrainrotUI, ServerScriptService.BrainrotUIServer, StarterPlayerScripts.BrainrotUIClient")
+for _, service in { workspace, SSS, game:GetService("ServerStorage"), RS, game:GetService("StarterGui") } do
+	for _, s in service:GetDescendants() do
+		if s:IsA("Script") and not s:IsDescendantOf(server) and s.Enabled then
+			local ok, source = pcall(function()
+				return s.Source
+			end)
+			if ok and type(source) == "string" and string.find(source, "ProcessReceipt", 1, true) then
+				warn("⚠️ Désactive ce script, il gère aussi les achats Robux : " .. s:GetFullName())
+			end
 		end
 	end
 end
-if #receiptScripts > 0 then
-	warn("⚠️ Ces scripts définissent aussi MarketplaceService.ProcessReceipt. Roblox n'en garde qu'un : "
-		.. "désactive-les, sinon certains achats ne seront pas donnés :")
-	for _, name in receiptScripts do
-		warn("   - " .. name)
-	end
-end
-local oldStats = ServerScriptService:FindFirstChild("leaderstats")
+local oldStats = SSS:FindFirstChild("leaderstats")
 if oldStats and oldStats:IsA("Script") and oldStats.Enabled then
-	warn("⚠️ ServerScriptService.leaderstats (ancien pack) crée d'autres statistiques et sauvegardes : désactive-le.")
+	warn("⚠️ Désactive ServerScriptService.leaderstats (ancien pack).")
 end
-local oldGui = StarterGui:FindFirstChild("GUI")
-if oldGui and oldGui:FindFirstChild("HUD") and oldGui:FindFirstChild("Frames") then
-	warn("⚠️ StarterGui.GUI (Essential UI Pack) est encore là : désactive-le (Enabled = false) pour ne pas avoir deux interfaces.")
-end
-if not workspace:FindFirstChildWhichIsA("SpawnLocation", true) then
-	print("ℹ️ Pas de SpawnLocation : les objets de test apparaîtront autour du centre de la map.")
-end
-
-if recording then
-	pcall(function()
-		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
-	end)
+local gui = game:GetService("StarterGui"):FindFirstChild("GUI")
+if gui and gui:FindFirstChild("HUD") then
+	warn("⚠️ Désactive StarterGui.GUI (ancienne interface) : Enabled = false.")
 end
 print("✅ BrainrotUI prête ! Enregistre la place, puis lance Play.")
-print("ℹ️ Pour sauvegarder la progression en test : Paramètres du jeu > Sécurité > Autoriser l'accès de Studio aux services d'API.")
 '''
 
-output = (
-    INSTALLER.replace("__SHARED__", table(shared))
-    .replace("__SERVER__", table(server))
-    .replace("__CLIENT__", table(client))
-)
-with open(OUT, "w", encoding="utf-8", newline="\n") as handle:
-    handle.write(output)
-print(f"{os.path.relpath(OUT)}: {len(output) // 1024} KB, {len(shared)} shared + {len(server)} server + {len(client)} client scripts")
+
+def main():
+    model = build_model()
+    with open(MODEL, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(model)
+    command = COMMAND_SOURCE.replace("__PACK__", PACK_NAME)
+    assert len(command) < COMMAND_LIMIT, f"command too long for the command bar: {len(command)}"
+    with open(COMMAND, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(command)
+    print(f"{os.path.relpath(MODEL)}: {len(model) // 1024} KB")
+    print(f"{os.path.relpath(COMMAND)}: {len(command)} characters (limit {COMMAND_LIMIT})")
+
+
+if __name__ == "__main__":
+    main()

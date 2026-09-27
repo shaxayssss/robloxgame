@@ -215,7 +215,9 @@ installeur Luau à coller dans la barre de commande de Studio.
   index, roue), construite entièrement en code, sans image. Serveur autoritaire : une clé
   DataStore par joueur avec verrou de session, un seul `ProcessReceipt`, requêtes validées.
   Source dans `src/` (arborescence Roblox, nommage Rojo) ; `build_installer.py` produit
-  `BrainrotUI_Install.lua`, à coller dans la barre de commande. Réglages dans
+  `BrainrotUI.rbxmx` (modèle à insérer) et `BrainrotUI_Install.lua` (commande courte qui le
+  range). ⚠️ La barre de commande de Studio ne garde que la fin d'un script de plus de
+  quelques milliers de caractères : tout gros installeur doit passer par un modèle `.rbxmx`. Réglages dans
   `UIConfig`. `tools/run_checks.py` fait tourner le vrai code dans un simulateur de l'API
   Roblox (55 contrôles) et rend les aperçus. Guide : `BrainrotFighter/UI/README.md`.
 - Les installeurs créent tous le même LocalScript `MapLife` (animation côté client) : garde

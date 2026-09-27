@@ -1,0 +1,4841 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+	<Item class="Folder" referent="RBX0000">
+		<Properties>
+			<string name="Name">BrainrotUI_Install</string>
+		</Properties>
+		<Item class="Folder" referent="RBX0001">
+			<Properties>
+				<string name="Name">BrainrotUI</string>
+			</Properties>
+			<Item class="ModuleScript" referent="RBX0002">
+				<Properties>
+					<string name="Name">Format</string>
+					<ProtectedString name="Source"><![CDATA[-- Format: number and time formatting for the interface (1.25K, 3.4M, 12:05...).
+
+local Format = {}
+
+local SUFFIXES = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc" }
+
+-- Removes trailing zeros after a decimal point: "1.50" -> "1.5", "2.00" -> "2".
+local function trimZeros(text: string): string
+	if not string.find(text, ".", 1, true) then
+		return text
+	end
+	text = (string.gsub(text, "0+$", ""))
+	text = (string.gsub(text, "%.$", ""))
+	return text
+end
+
+-- 999 -> "999", 1234 -> "1.23K", 12345 -> "12.3K", 123456 -> "123K", 1e6 -> "1M".
+-- Values are floored so the display never shows more than the player owns.
+function Format.short(value: number?): string
+	local n = tonumber(value) or 0
+	local sign = if n < 0 then "-" else ""
+	n = math.abs(n)
+	if n < 1000 then
+		return sign .. tostring(math.floor(n))
+	end
+	local tier = math.floor(math.log10(n) / 3)
+	local scaled = n / 10 ^ (tier * 3)
+	-- guard against log10 rounding at exact powers of ten
+	if scaled >= 1000 then
+		tier += 1
+		scaled /= 1000
+	elseif scaled < 1 then
+		tier -= 1
+		scaled *= 1000
+	end
+	if tier >= #SUFFIXES then
+		return sign .. string.format("%.2e", n)
+	end
+	local text
+	if scaled >= 100 then
+		text = tostring(math.floor(scaled))
+	elseif scaled >= 10 then
+		text = trimZeros(string.format("%.1f", math.floor(scaled * 10) / 10))
+	else
+		text = trimZeros(string.format("%.2f", math.floor(scaled * 100) / 100))
+	end
+	return sign .. text .. SUFFIXES[tier + 1]
+end
+
+-- 1234567 -> "1 234 567"
+function Format.full(value: number?): string
+	local text = tostring(math.floor(tonumber(value) or 0))
+	local sign = ""
+	if string.sub(text, 1, 1) == "-" then
+		sign = "-"
+		text = string.sub(text, 2)
+	end
+	local out = string.reverse((string.gsub(string.reverse(text), "(%d%d%d)", "%1 ")))
+	out = (string.gsub(out, "^ ", ""))
+	return sign .. out
+end
+
+-- Multiplier: 1.5 -> "1.5", 2 -> "2", 1.25 -> "1.25"
+function Format.multiplier(value: number): string
+	return trimZeros(string.format("%.2f", value))
+end
+
+-- Countdown: 75 -> "1:15", 3725 -> "1:02:05"
+function Format.clock(seconds: number): string
+	local total = math.max(0, math.ceil(seconds))
+	local hours = math.floor(total / 3600)
+	local minutes = math.floor(total % 3600 / 60)
+	local secs = total % 60
+	if hours > 0 then
+		return string.format("%d:%02d:%02d", hours, minutes, secs)
+	end
+	return string.format("%d:%02d", minutes, secs)
+end
+
+-- Duration in words: 300 -> "5 min", 5400 -> "1 h 30", 45 -> "45 s"
+function Format.duration(seconds: number): string
+	local total = math.max(0, math.floor(seconds))
+	if total < 60 then
+		return total .. " s"
+	elseif total < 3600 then
+		return math.floor(total / 60) .. " min"
+	end
+	local hours = math.floor(total / 3600)
+	local minutes = math.floor(total % 3600 / 60)
+	if minutes == 0 then
+		return hours .. " h"
+	end
+	return string.format("%d h %02d", hours, minutes)
+end
+
+-- Percentage with one decimal when useful: 0.3 -> "30%", 0.025 -> "2.5%"
+function Format.percent(ratio: number): string
+	local value = ratio * 100
+	if value >= 10 or value == math.floor(value) then
+		return string.format("%d%%", math.floor(value + 0.5))
+	end
+	return trimZeros(string.format("%.1f", value)) .. "%"
+end
+
+return Format
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0003">
+				<Properties>
+					<string name="Name">Rules</string>
+					<ProtectedString name="Source"><![CDATA[-- Rules: formulas and lookups shared by the server (authority) and the client (display),
+-- so both always agree on requirements, multipliers and odds.
+
+local Config = require(script.Parent:WaitForChild("UIConfig"))
+local Format = require(script.Parent:WaitForChild("Format"))
+
+local Rules = {}
+
+Rules.RarityByKey = {}
+Rules.ItemById = {}
+Rules.ItemsByRarity = {}
+Rules.CurrencyByKey = {}
+Rules.PassByKey = {}
+Rules.PassById = {}
+Rules.ProductByKey = {}
+Rules.ProductById = {}
+
+for order, rarity in Config.Rarities do
+	rarity.Order = order
+	Rules.RarityByKey[rarity.Key] = rarity
+	Rules.ItemsByRarity[rarity.Key] = {}
+end
+
+for _, item in Config.Index do
+	Rules.ItemById[item.Id] = item
+	local list = Rules.ItemsByRarity[item.Rarity]
+	if list then
+		table.insert(list, item)
+	else
+		warn(("[BrainrotUI] Index item %s has an unknown rarity %s"):format(item.Id, tostring(item.Rarity)))
+	end
+end
+
+for _, currency in Config.Currencies do
+	Rules.CurrencyByKey[currency.Key] = currency
+end
+
+for _, pass in Config.GamePasses do
+	Rules.PassByKey[pass.Key] = pass
+	if pass.Id and pass.Id > 0 then
+		Rules.PassById[pass.Id] = pass
+	end
+end
+
+for _, product in Config.Products do
+	Rules.ProductByKey[product.Key] = product
+	if product.Id and product.Id > 0 then
+		Rules.ProductById[product.Id] = product
+	end
+end
+
+-- Power needed for the next rebirth, when `rebirths` have already been done.
+function Rules.rebirthRequirement(rebirths: number): number
+	local rebirth = Config.Rebirth
+	return math.floor(rebirth.BasePower * rebirth.Growth ^ rebirths + 0.5)
+end
+
+-- Permanent power multiplier given by rebirths.
+function Rules.rebirthMultiplier(rebirths: number): number
+	return 1 + rebirths * Config.Rebirth.MultiplierPerRebirth
+end
+
+-- Gems given by rebirth number `rebirthNumber` (1 for the first one).
+function Rules.rebirthGems(rebirthNumber: number): number
+	return Config.Rebirth.GemsPerRebirth * rebirthNumber
+end
+
+-- Index of an entry drawn at random according to its Weight field.
+function Rules.pickWeighted(entries: { any }, rng: Random): number
+	local total = 0
+	for _, entry in entries do
+		total += entry.Weight or 0
+	end
+	local roll = rng:NextNumber() * total
+	for index, entry in entries do
+		roll -= entry.Weight or 0
+		if roll < 0 then
+			return index
+		end
+	end
+	return #entries
+end
+
+-- Chance of each wheel reward, between 0 and 1.
+function Rules.wheelOdds(): { number }
+	local total = 0
+	for _, reward in Config.Wheel.Rewards do
+		total += reward.Weight or 0
+	end
+	local odds = {}
+	for index, reward in Config.Wheel.Rewards do
+		odds[index] = if total > 0 then (reward.Weight or 0) / total else 0
+	end
+	return odds
+end
+
+-- Short and long descriptions of a reward table, for labels.
+function Rules.describe(reward: { [string]: any }): { Icon: string, Short: string, Long: string }
+	for _, key in { "Coins", "Gems", "Power" } do
+		local amount = reward[key]
+		if amount then
+			local currency = Rules.CurrencyByKey[key]
+			return {
+				Icon = currency.Icon,
+				Short = Format.short(amount),
+				Long = Format.short(amount) .. " " .. currency.Label,
+			}
+		end
+	end
+	if reward.Spins then
+		return { Icon = "🎡", Short = "+" .. reward.Spins, Long = reward.Spins .. " tours" }
+	end
+	if reward.Boosts then
+		local name, seconds = next(reward.Boosts)
+		local boost = name and Config.Boosts[name]
+		if boost then
+			return {
+				Icon = boost.Icon,
+				Short = "x" .. Format.multiplier(boost.Multiplier),
+				Long = boost.Label .. " " .. Format.duration(seconds),
+			}
+		end
+	end
+	return { Icon = "🎁", Short = "?", Long = "Surprise" }
+end
+
+return Rules
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0004">
+				<Properties>
+					<string name="Name">UIConfig</string>
+					<ProtectedString name="Source"><![CDATA[-- BrainrotUI configuration: every number, price, reward, text and colour of the interface.
+-- Shared by the server (which enforces it) and the client (which only displays it).
+--
+-- Product and game pass IDs are 0 until you create them on the Creator Dashboard.
+-- A product with Id = 0 stays visible but tells the player it is not on sale yet.
+
+local UIConfig = {}
+
+-- Saving. Changing StoreName starts every player from scratch.
+UIConfig.Data = {
+	StoreName = "BrainrotUI_v1",
+	AutosaveInterval = 60, -- seconds
+}
+
+-- What a brand new player starts with.
+UIConfig.StartingData = {
+	Coins = 0,
+	Gems = 0,
+	Power = 0,
+	Rebirths = 0,
+	Spins = 1,
+}
+
+-- HUD counters, top to bottom. Colors = text gradient, Stroke = text outline.
+UIConfig.Currencies = {
+	{
+		Key = "Coins",
+		Label = "Pièces",
+		Icon = "💰",
+		Colors = { Color3.fromRGB(160, 255, 80), Color3.fromRGB(255, 232, 60) },
+		Stroke = Color3.fromRGB(30, 72, 0),
+		ShopShortcut = true,
+	},
+	{
+		Key = "Gems",
+		Label = "Gemmes",
+		Icon = "💎",
+		Colors = { Color3.fromRGB(130, 240, 255), Color3.fromRGB(90, 150, 255) },
+		Stroke = Color3.fromRGB(10, 38, 92),
+	},
+	{
+		Key = "Power",
+		Label = "Puissance",
+		Icon = "💪",
+		Colors = { Color3.fromRGB(255, 225, 90), Color3.fromRGB(255, 125, 40) },
+		Stroke = Color3.fromRGB(84, 36, 0),
+	},
+}
+
+-- Columns of the Roblox player list.
+UIConfig.Leaderstats = {
+	{ Key = "Power", Name = "Puissance" },
+	{ Key = "Rebirths", Name = "Renaissances" },
+}
+
+-- Rebirth: requirement for rebirth n (starting at 0) = BasePower * Growth ^ n.
+UIConfig.Rebirth = {
+	BasePower = 100,
+	Growth = 3,
+	MultiplierPerRebirth = 0.5, -- +50 % power gain per rebirth
+	GemsPerRebirth = 15, -- rebirth number n gives GemsPerRebirth * n gems
+	ResetCoins = true, -- coins also go back to zero
+	SkipProduct = "RebirthSkip", -- key in UIConfig.Products
+}
+
+-- Temporary multipliers. Stat = what they multiply.
+UIConfig.Boosts = {
+	Power = { Label = "x2 Puissance", Icon = "⚡", Stat = "Power", Multiplier = 2 },
+	Coins = { Label = "x2 Pièces", Icon = "🍀", Stat = "Coins", Multiplier = 2 },
+}
+
+-- Rarities of the Index. Weight = chance of a power orb of that rarity.
+-- OrbPower = power given by an orb, IndexReward = gems for completing the series.
+UIConfig.Rarities = {
+	{ Key = "Common", Label = "Commun", Color = Color3.fromRGB(170, 180, 196), Weight = 62, OrbPower = 1, IndexReward = 25 },
+	{ Key = "Rare", Label = "Rare", Color = Color3.fromRGB(70, 165, 255), Weight = 25, OrbPower = 3, IndexReward = 60 },
+	{ Key = "Epic", Label = "Épique", Color = Color3.fromRGB(190, 100, 255), Weight = 10, OrbPower = 8, IndexReward = 150 },
+	{ Key = "Legendary", Label = "Légendaire", Color = Color3.fromRGB(255, 196, 40), Weight = 3, OrbPower = 25, IndexReward = 400 },
+}
+
+-- Index entries. Every power orb reveals one brainrot of its rarity.
+-- Icon is an emoji; Image (rbxassetid://...) replaces it when set.
+UIConfig.Index = {
+	{ Id = "Pastarello", Name = "Pastarello Zigzag", Rarity = "Common", Icon = "🍝" },
+	{ Id = "Pagnotto", Name = "Pagnotto Saltellino", Rarity = "Common", Icon = "🍞" },
+	{ Id = "Bananello", Name = "Bananello Boing", Rarity = "Common", Icon = "🍌" },
+	{ Id = "Pizzarotto", Name = "Pizzarotto Turbo", Rarity = "Rare", Icon = "🍕" },
+	{ Id = "Formaggino", Name = "Formaggino Razzo", Rarity = "Rare", Icon = "🧀" },
+	{ Id = "Cornetto", Name = "Cornetto Cannone", Rarity = "Rare", Icon = "🥐" },
+	{ Id = "Espressino", Name = "Espressino Tornado", Rarity = "Epic", Icon = "☕" },
+	{ Id = "Melonzio", Name = "Melonzio Ninja", Rarity = "Epic", Icon = "🍉" },
+	{ Id = "Gelatone", Name = "Gelatone Cosmico", Rarity = "Epic", Icon = "🍦" },
+	{ Id = "Squalone", Name = "Squalone Spaghettone", Rarity = "Legendary", Icon = "🦈" },
+	{ Id = "Coccodrillo", Name = "Coccodrillo Tortellino", Rarity = "Legendary", Icon = "🐊" },
+	{ Id = "Cappuccione", Name = "Re Cappuccione", Rarity = "Legendary", Icon = "👑" },
+}
+
+-- Lucky wheel. The server draws the reward; Weight is the relative chance
+-- (the odds are shown to players, as Roblox requires for paid random items).
+-- A reward holds Coins, Gems, Power, Spins, or Boosts = { BoostName = seconds }.
+UIConfig.Wheel = {
+	FreeSpinCooldown = 15 * 60, -- one free spin every 15 minutes
+	Rewards = {
+		{ Coins = 500, Weight = 30, Color = Color3.fromRGB(255, 92, 120) },
+		{ Gems = 10, Weight = 22, Color = Color3.fromRGB(70, 170, 255) },
+		{ Coins = 2500, Weight = 18, Color = Color3.fromRGB(255, 190, 50) },
+		{ Boosts = { Power = 300 }, Weight = 14, Color = Color3.fromRGB(180, 95, 255) },
+		{ Gems = 50, Weight = 10, Color = Color3.fromRGB(70, 210, 120) },
+		{ Spins = 2, Weight = 6, Color = Color3.fromRGB(255, 130, 50) },
+	},
+	SpinProducts = { "Spins3", "Spins9" }, -- keys in UIConfig.Products
+}
+
+-- Game passes. Rewards are granted once; Multipliers apply forever.
+UIConfig.GamePasses = {
+	{
+		Key = "StarterPack",
+		Id = 0,
+		Name = "Pack de départ",
+		Description = "Un gros coup de pouce, une seule fois.",
+		Icon = "🎁",
+		PriceHint = 99,
+		Rewards = { Coins = 25000, Gems = 100, Spins = 5 },
+		Colors = { Color3.fromRGB(175, 80, 255), Color3.fromRGB(255, 120, 215) },
+	},
+	{
+		Key = "DoublePower",
+		Id = 0,
+		Name = "Puissance x2",
+		Description = "Double toute la puissance gagnée, pour toujours.",
+		Icon = "💪",
+		PriceHint = 199,
+		Multipliers = { Power = 2 },
+		Colors = { Color3.fromRGB(255, 120, 40), Color3.fromRGB(255, 205, 60) },
+	},
+	{
+		Key = "DoubleCoins",
+		Id = 0,
+		Name = "Pièces x2",
+		Description = "Double toutes les pièces ramassées, pour toujours.",
+		Icon = "💰",
+		PriceHint = 149,
+		Multipliers = { Coins = 2 },
+		Colors = { Color3.fromRGB(40, 185, 90), Color3.fromRGB(160, 235, 70) },
+	},
+}
+
+-- Developer products (bought as many times as wanted).
+-- Section decides where the product appears: Boosts / Coins (shop), Wheel, Rebirth, Offer (HUD).
+UIConfig.Products = {
+	{ Key = "BoostPower", Id = 0, Section = "Boosts", Name = "x2 Puissance", Description = "15 minutes", Icon = "⚡", PriceHint = 25, Grant = { Boosts = { Power = 900 } } },
+	{ Key = "BoostCoins", Id = 0, Section = "Boosts", Name = "x2 Pièces", Description = "15 minutes", Icon = "🍀", PriceHint = 25, Grant = { Boosts = { Coins = 900 } } },
+	{ Key = "BoostBoth", Id = 0, Section = "Boosts", Name = "Méga boost", Description = "Les deux, 30 minutes", Icon = "🚀", PriceHint = 79, Grant = { Boosts = { Power = 1800, Coins = 1800 } } },
+	{ Key = "Coins1", Id = 0, Section = "Coins", Name = "Liasse", Description = "+5K pièces", Icon = "💵", PriceHint = 19, Grant = { Coins = 5000 } },
+	{ Key = "Coins2", Id = 0, Section = "Coins", Name = "Sac", Description = "+50K pièces", Icon = "💰", PriceHint = 79, Grant = { Coins = 50000 } },
+	{ Key = "Coins3", Id = 0, Section = "Coins", Name = "Banque", Description = "+500K pièces", Icon = "🏦", PriceHint = 249, Grant = { Coins = 500000 } },
+	{ Key = "Spins3", Id = 0, Section = "Wheel", Name = "+3 tours", Icon = "🎡", PriceHint = 39, Grant = { Spins = 3 } },
+	{ Key = "Spins9", Id = 0, Section = "Wheel", Name = "+9 tours", Icon = "🎡", PriceHint = 99, Tag = "MÉGA OFFRE", Grant = { Spins = 9 } },
+	{ Key = "RebirthSkip", Id = 0, Section = "Rebirth", Name = "Renaissance immédiate", Icon = "🔁", PriceHint = 49, Grant = { RebirthSkip = true } },
+	{ Key = "Offer", Id = 0, Section = "Offer", Name = "Offre spéciale", Icon = "💰", PriceHint = 45, Grant = { Coins = 250000 } },
+}
+
+-- Test pickups spawned around the SpawnLocation so everything can be tried at once.
+-- Your own parts work too: tag them "BrainrotUIPickup" and set the attributes
+-- Kind = "Coins" or "Power", and Rarity (Common/Rare/Epic/Legendary) for power orbs.
+UIConfig.Pickups = {
+	AutoSpawn = true,
+	Tag = "BrainrotUIPickup",
+	Count = 18,
+	MinRadius = 14,
+	MaxRadius = 70,
+	RespawnTime = 8,
+	CoinChance = 0.4,
+	CoinAmount = 25,
+}
+
+-- Interface sounds (empty string = silent).
+UIConfig.Sounds = {
+	Volume = 0.5,
+	Ids = {
+		Click = "rbxasset://sounds/clickfast.wav",
+		Open = "rbxasset://sounds/swoosh.wav",
+		Tick = "rbxasset://sounds/snap.wav",
+		Reward = "rbxasset://sounds/electronicpingshort.wav",
+	},
+}
+
+-- Colours and fonts.
+UIConfig.Theme = {
+	TitleFont = Enum.Font.LuckiestGuy,
+	BodyFont = Enum.Font.FredokaOne,
+	Panel = Color3.fromRGB(28, 23, 52),
+	PanelLight = Color3.fromRGB(46, 39, 82),
+	Outline = Color3.fromRGB(12, 8, 22),
+	Text = Color3.fromRGB(255, 255, 255),
+	Muted = Color3.fromRGB(196, 190, 228),
+	Green = Color3.fromRGB(72, 214, 84),
+	Gold = Color3.fromRGB(255, 196, 40),
+	Blue = Color3.fromRGB(60, 160, 255),
+	Cyan = Color3.fromRGB(50, 215, 245),
+	Purple = Color3.fromRGB(165, 90, 255),
+	Pink = Color3.fromRGB(255, 90, 170),
+	Orange = Color3.fromRGB(255, 140, 40),
+	Red = Color3.fromRGB(240, 62, 72),
+	Disabled = Color3.fromRGB(122, 120, 140),
+	Windows = {
+		Shop = { Color3.fromRGB(255, 215, 70), Color3.fromRGB(255, 135, 30) },
+		Rebirth = { Color3.fromRGB(200, 110, 255), Color3.fromRGB(255, 80, 170) },
+		Index = { Color3.fromRGB(80, 230, 255), Color3.fromRGB(60, 120, 255) },
+		Wheel = { Color3.fromRGB(255, 110, 160), Color3.fromRGB(255, 170, 50) },
+	},
+}
+
+-- Every text shown to players.
+UIConfig.Text = {
+	ShopButton = "BOUTIQUE",
+	RebirthButton = "RENAISSANCE",
+	IndexButton = "INDEX",
+	WheelButton = "ROUE",
+	InviteButton = "INVITER",
+	OfferTag = "OFFRE",
+
+	ShopTitle = "BOUTIQUE",
+	RebirthTitle = "RENAISSANCE",
+	IndexTitle = "INDEX",
+	WheelTitle = "ROUE",
+
+	SectionPasses = "PASS",
+	SectionBoosts = "BOOSTS",
+	SectionCoins = "PIÈCES",
+	Owned = "POSSÉDÉ ✓",
+
+	RebirthNumber = "Renaissance n°%d",
+	Before = "AVANT",
+	After = "APRÈS",
+	PowerMultiplier = "multiplicateur de puissance",
+	RebirthReward = "Récompense : +%s 💎",
+	RebirthWarning = "⚠ Ta puissance et tes pièces repartent de zéro",
+	RebirthAction = "RENAÎTRE",
+	RebirthSkip = "PASSER",
+	RebirthDone = "RENAISSANCE !",
+	RebirthDoneSub = "Puissance x%s pour toujours",
+	RebirthNotReady = "Pas encore assez de puissance !",
+	RebirthReady = "Tu peux renaître !",
+
+	IndexCollection = "Collection : %d / %d",
+	IndexClaim = "RÉCLAMER %s 💎",
+	IndexClaimed = "RÉCLAMÉ ✓",
+	IndexIncomplete = "Trouve-les tous !",
+	IndexLocked = "???",
+	IndexNew = "NOUVEAU",
+	IndexNewItem = "Nouveau brainrot : %s !",
+	IndexClaimDone = "Série %s complétée : +%s 💎",
+	IndexAlreadyClaimed = "Récompense déjà réclamée",
+
+	Spins = "TOURS : %d",
+	FreeSpinIn = "🎁 Tour gratuit dans %s",
+	FreeSpinReady = "🎁 Tour gratuit disponible !",
+	SpinAction = "TOURNER !",
+	SpinsProduct = "+%d TOURS",
+	Odds = "CHANCES",
+	NoSpins = "Plus de tours : reviens plus tard ou achètes-en !",
+	WheelWon = "GAGNÉ !",
+	WheelSubtitle = "Roue de la chance",
+	RandomRestricted = "Achat de tours indisponible ici",
+
+	Buying = "Achat en cours…",
+	PurchaseCancelled = "Achat annulé",
+	PurchaseError = "L'achat n'a pas pu s'ouvrir",
+	ProductMissing = "« %s » n'est pas encore en vente (ID à mettre dans UIConfig)",
+	ThanksPurchase = "Merci pour ton achat ! 💖",
+	AlreadyOwned = "Tu possèdes déjà ce pass",
+	PassRewardGranted = "Récompenses du %s reçues !",
+	BoostStarted = "%s activé !",
+
+	InviteUnavailable = "Les invitations ne sont pas disponibles ici",
+	TooFast = "Doucement !",
+	GenericError = "Oups, réessaie",
+	SessionOnly = "Mode test : ta progression ne sera pas sauvegardée",
+	DataLoadFailed = "Impossible de charger tes données. Reviens dans un instant !",
+}
+
+return UIConfig
+]]></ProtectedString>
+				</Properties>
+			</Item>
+		</Item>
+		<Item class="Script" referent="RBX0005">
+			<Properties>
+				<string name="Name">BrainrotUIServer</string>
+				<ProtectedString name="Source"><![CDATA[-- BrainrotUI server bootstrap: creates the remotes, starts the services and
+-- routes the client requests. Every request is validated and rate limited here;
+-- the rules themselves live in Economy.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local PlayerData = require(script:WaitForChild("PlayerData"))
+local Economy = require(script:WaitForChild("Economy"))
+local Store = require(script:WaitForChild("Store"))
+local Pickups = require(script:WaitForChild("Pickups"))
+
+local Text = Config.Text
+
+local function ensure(parent: Instance, className: string, name: string): Instance
+	local existing = parent:FindFirstChild(name)
+	if existing and existing.ClassName == className then
+		return existing
+	end
+	if existing then
+		existing:Destroy()
+	end
+	local instance = Instance.new(className)
+	instance.Name = name
+	instance.Parent = parent
+	return instance
+end
+
+local remotes = ensure(shared, "Folder", "Remotes") :: Folder
+local request = ensure(remotes, "RemoteFunction", "Request") :: RemoteFunction
+ensure(remotes, "RemoteEvent", "Notify")
+ensure(remotes, "RemoteEvent", "Reward")
+
+Economy.Init(remotes)
+PlayerData.Start()
+Store.Start()
+Pickups.Start()
+
+-- Minimum seconds between two calls of the same action by one player.
+local COOLDOWNS = {
+	Spin = 0.6,
+	Rebirth = 1,
+	ClaimIndex = 0.5,
+}
+
+local handlers = {
+	Spin = function(player: Player)
+		return Economy.Spin(player)
+	end,
+	Rebirth = function(player: Player)
+		return Economy.Rebirth(player, false)
+	end,
+	ClaimIndex = function(player: Player, rarityKey: any)
+		return Economy.ClaimIndex(player, rarityKey)
+	end,
+}
+
+local lastCalls: { [Player]: { [string]: number } } = {}
+
+request.OnServerInvoke = function(player: Player, action: any, argument: any)
+	if type(action) ~= "string" or not handlers[action] then
+		return { ok = false }
+	end
+	local calls = lastCalls[player]
+	if not calls then
+		calls = {}
+		lastCalls[player] = calls
+	end
+	local now = os.clock()
+	if now - (calls[action] or 0) < COOLDOWNS[action] then
+		return { ok = false, message = Text.TooFast }
+	end
+	calls[action] = now
+	local ok, result = pcall(handlers[action], player, argument)
+	if not ok then
+		warn(("[BrainrotUI] %s failed for %s: %s"):format(action, player.Name, tostring(result)))
+		return { ok = false, message = Text.GenericError }
+	end
+	return result
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	lastCalls[player] = nil
+end)
+]]></ProtectedString>
+				<bool name="Disabled">true</bool>
+			</Properties>
+			<Item class="ModuleScript" referent="RBX0006">
+				<Properties>
+					<string name="Name">Economy</string>
+					<ProtectedString name="Source"><![CDATA[-- Economy: the game rules behind the interface. Server only, always authoritative.
+--
+-- Other server scripts can use it too:
+--   local Economy = require(game.ServerScriptService.BrainrotUIServer.Economy)
+--   Economy.Earn(player, "Power", 10)     -- gameplay gain, multipliers applied
+--   Economy.Add(player, { Gems = 5 })     -- raw grant, no multiplier
+--   Economy.Discover(player, "Pizzarotto") -- reveals an Index entry
+--   Economy.Notify(player, "Hello!", "success")
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local Format = require(shared:WaitForChild("Format"))
+local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
+
+local Text = Config.Text
+
+local Economy = {}
+
+local rng = Random.new()
+local remotes: Folder? = nil
+
+type Result = { ok: boolean, message: string?, [string]: any }
+
+function Economy.Init(remoteFolder: Folder)
+	remotes = remoteFolder
+end
+
+-- Toast on the player's screen. kind: "info" | "success" | "error" | "reward"
+function Economy.Notify(player: Player, text: string, kind: string?)
+	local folder = remotes
+	if folder then
+		(folder:FindFirstChild("Notify") :: RemoteEvent):FireClient(player, text, kind or "info")
+	end
+end
+
+-- Visual feedback for a gain (floating numbers, new Index entry, purchase popup).
+function Economy.Reward(player: Player, payload: { [string]: any })
+	local folder = remotes
+	if folder then
+		(folder:FindFirstChild("Reward") :: RemoteEvent):FireClient(player, payload)
+	end
+end
+
+function Economy.BoostActive(player: Player, name: string): boolean
+	local data = PlayerData.Get(player)
+	return data ~= nil and (data.Boosts[name] or 0) > os.time()
+end
+
+-- Total multiplier on a stat ("Power" or "Coins"): rebirths, passes and boosts.
+function Economy.Multiplier(player: Player, stat: string): number
+	local data = PlayerData.Get(player)
+	if not data then
+		return 1
+	end
+	local multiplier = 1
+	if stat == "Power" then
+		multiplier *= Rules.rebirthMultiplier(data.Rebirths)
+	end
+	for _, pass in Config.GamePasses do
+		local bonus = pass.Multipliers and pass.Multipliers[stat]
+		if bonus and player:GetAttribute("Pass_" .. pass.Key) == true then
+			multiplier *= bonus
+		end
+	end
+	for name, boost in Config.Boosts do
+		if boost.Stat == stat and Economy.BoostActive(player, name) then
+			multiplier *= boost.Multiplier
+		end
+	end
+	return multiplier
+end
+
+-- Raw grant of a reward table: Coins, Gems, Power, Spins, Boosts = { Name = seconds }.
+function Economy.Add(player: Player, reward: { [string]: any }): boolean
+	local data = PlayerData.Get(player)
+	if not data then
+		return false
+	end
+	for _, stat in { "Coins", "Gems", "Power", "Spins" } do
+		local amount = reward[stat]
+		if type(amount) == "number" then
+			data[stat] = math.max(0, (data[stat] or 0) + amount)
+		end
+	end
+	if type(reward.Boosts) == "table" then
+		local now = os.time()
+		for name, seconds in reward.Boosts do
+			if Config.Boosts[name] and type(seconds) == "number" then
+				-- stacking: a new boost extends the running one
+				data.Boosts[name] = math.max(data.Boosts[name] or 0, now) + seconds
+			end
+		end
+	end
+	PlayerData.Replicate(player)
+	return true
+end
+
+-- Gameplay gain with every multiplier applied. Returns the amount actually gained.
+function Economy.Earn(player: Player, stat: string, base: number): number
+	local gained = math.max(0, math.floor(base * Economy.Multiplier(player, stat) + 0.5))
+	Economy.Add(player, { [stat] = gained })
+	return gained
+end
+
+-- Adds one copy of an Index entry. Returns true the first time it is found.
+function Economy.Discover(player: Player, itemId: string): boolean
+	local data = PlayerData.Get(player)
+	if not data or not Rules.ItemById[itemId] then
+		return false
+	end
+	local count = (data.Index[itemId] or 0) + 1
+	data.Index[itemId] = count
+	PlayerData.Replicate(player)
+	return count == 1
+end
+
+-- Rebirth. `ignoreRequirement` is used by the paid skip.
+function Economy.Rebirth(player: Player, ignoreRequirement: boolean?): Result
+	local data = PlayerData.Get(player)
+	if not data then
+		return { ok = false, message = Text.GenericError }
+	end
+	local required = Rules.rebirthRequirement(data.Rebirths)
+	if not ignoreRequirement and data.Power < required then
+		return { ok = false, message = Text.RebirthNotReady }
+	end
+	data.Rebirths += 1
+	data.Power = 0
+	if Config.Rebirth.ResetCoins then
+		data.Coins = 0
+	end
+	local gems = Rules.rebirthGems(data.Rebirths)
+	data.Gems += gems
+	PlayerData.Replicate(player)
+	return { ok = true, rebirths = data.Rebirths, gems = gems }
+end
+
+-- Wheel spin: uses the free spin first, then a bought one. The reward is drawn
+-- and granted here; the client only animates towards the returned index.
+function Economy.Spin(player: Player): Result
+	local data = PlayerData.Get(player)
+	if not data then
+		return { ok = false, message = Text.GenericError }
+	end
+	local now = os.time()
+	local free = now >= (data.FreeSpinAt or 0)
+	if free then
+		data.FreeSpinAt = now + Config.Wheel.FreeSpinCooldown
+	elseif data.Spins > 0 then
+		data.Spins -= 1
+	else
+		return { ok = false, message = Text.NoSpins }
+	end
+	local index = Rules.pickWeighted(Config.Wheel.Rewards, rng)
+	Economy.Add(player, Config.Wheel.Rewards[index])
+	return { ok = true, index = index, free = free }
+end
+
+-- Series reward of the Index, once every entry of a rarity has been found.
+function Economy.ClaimIndex(player: Player, rarityKey: any): Result
+	local rarity = if type(rarityKey) == "string" then Rules.RarityByKey[rarityKey] else nil
+	local data = PlayerData.Get(player)
+	if not rarity or not data then
+		return { ok = false, message = Text.GenericError }
+	end
+	if data.IndexClaimed[rarity.Key] then
+		return { ok = false, message = Text.IndexAlreadyClaimed }
+	end
+	for _, item in Rules.ItemsByRarity[rarity.Key] do
+		if (data.Index[item.Id] or 0) == 0 then
+			return { ok = false, message = Text.IndexIncomplete }
+		end
+	end
+	data.IndexClaimed[rarity.Key] = true
+	data.Gems += rarity.IndexReward
+	PlayerData.Replicate(player)
+	return {
+		ok = true,
+		gems = rarity.IndexReward,
+		message = Text.IndexClaimDone:format(rarity.Label, Format.short(rarity.IndexReward)),
+	}
+end
+
+return Economy
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0007">
+				<Properties>
+					<string name="Name">Pickups</string>
+					<ProtectedString name="Source"><![CDATA[-- Pickups: collectible coins and power orbs in the world.
+--
+-- Every BasePart tagged Config.Pickups.Tag is collectible:
+--   Kind   = "Coins" or "Power" (attribute, default "Power")
+--   Rarity = "Common" | "Rare" | "Epic" | "Legendary" (power orbs)
+--   Amount = optional base amount (else CoinAmount / the rarity OrbPower)
+-- Each power orb also reveals a brainrot of its rarity in the Index.
+-- With AutoSpawn, test pickups are scattered around the SpawnLocation.
+
+local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
+local Economy = require(script.Parent:WaitForChild("Economy"))
+
+local Settings = Config.Pickups
+
+local Pickups = {}
+
+local rng = Random.new()
+local COIN_COLOR = Color3.fromRGB(255, 200, 40)
+local MAX_TOUCH_DISTANCE = 14
+
+local function setVisible(part: BasePart, visible: boolean)
+	part.Transparency = if visible then (tonumber(part:GetAttribute("BaseTransparency")) or 0) else 1
+	part.CanTouch = visible
+	for _, child in part:GetChildren() do
+		if child:IsA("Light") or child:IsA("ParticleEmitter") then
+			child.Enabled = visible
+		end
+	end
+end
+
+local function collect(player: Player, part: BasePart)
+	local kind = part:GetAttribute("Kind")
+	if kind == "Coins" then
+		local gained = Economy.Earn(player, "Coins", part:GetAttribute("Amount") or Settings.CoinAmount)
+		Economy.Reward(player, { Stat = "Coins", Amount = gained })
+		return
+	end
+	local rarity = Rules.RarityByKey[part:GetAttribute("Rarity") or ""] or Config.Rarities[1]
+	local gained = Economy.Earn(player, "Power", part:GetAttribute("Amount") or rarity.OrbPower)
+	local items = Rules.ItemsByRarity[rarity.Key]
+	local payload: { [string]: any } = { Stat = "Power", Amount = gained }
+	if #items > 0 then
+		local item = items[rng:NextInteger(1, #items)]
+		payload.Item = item.Id
+		payload.New = Economy.Discover(player, item.Id)
+	end
+	Economy.Reward(player, payload)
+end
+
+local function setup(instance: Instance)
+	if not instance:IsA("BasePart") or instance:GetAttribute("BrainrotUIReady") then
+		return
+	end
+	local part = instance :: BasePart
+	part:SetAttribute("BrainrotUIReady", true)
+	if part:GetAttribute("BaseTransparency") == nil then
+		part:SetAttribute("BaseTransparency", part.Transparency)
+	end
+	part.CanTouch = true
+	local busy = false
+	part.Touched:Connect(function(hit)
+		if busy then
+			return
+		end
+		local character = hit:FindFirstAncestorOfClass("Model")
+		local player = if character then Players:GetPlayerFromCharacter(character) else nil
+		if not player or not character or not PlayerData.Get(player) then
+			return
+		end
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		local root = character:FindFirstChild("HumanoidRootPart")
+		if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
+			return
+		end
+		-- the touch is reported by the player's machine: check it is plausible
+		if (root.Position - part.Position).Magnitude > MAX_TOUCH_DISTANCE + part.Size.Magnitude then
+			return
+		end
+		busy = true
+		setVisible(part, false)
+		collect(player, part)
+		task.delay(Settings.RespawnTime, function()
+			if part.Parent then
+				setVisible(part, true)
+			end
+			busy = false
+		end)
+	end)
+end
+
+local function pickRarity(): { [string]: any }
+	return Config.Rarities[Rules.pickWeighted(Config.Rarities, rng)]
+end
+
+local function makePickup(folder: Folder, position: Vector3, isCoin: boolean)
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CastShadow = false
+	local color
+	if isCoin then
+		part.Name = "Coin"
+		part.Shape = Enum.PartType.Cylinder
+		part.Size = Vector3.new(0.6, 2.8, 2.8)
+		part.Material = Enum.Material.SmoothPlastic
+		color = COIN_COLOR
+		part:SetAttribute("Kind", "Coins")
+	else
+		local rarity = pickRarity()
+		part.Name = "PowerOrb_" .. rarity.Key
+		part.Shape = Enum.PartType.Ball
+		part.Size = Vector3.new(2.4, 2.4, 2.4)
+		part.Material = Enum.Material.Neon
+		color = rarity.Color
+		part:SetAttribute("Kind", "Power")
+		part:SetAttribute("Rarity", rarity.Key)
+		if rarity.Order >= 3 then
+			local sparkles = Instance.new("ParticleEmitter")
+			sparkles.Color = ColorSequence.new(rarity.Color)
+			sparkles.LightEmission = 1
+			sparkles.Rate = 6
+			sparkles.Lifetime = NumberRange.new(0.6, 1)
+			sparkles.Speed = NumberRange.new(1.5, 3)
+			sparkles.SpreadAngle = Vector2.new(180, 180)
+			sparkles.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.35), NumberSequenceKeypoint.new(1, 0) })
+			sparkles.Parent = part
+		end
+	end
+	part.Color = color
+	part.CFrame = CFrame.new(position)
+	local light = Instance.new("PointLight")
+	light.Color = color
+	light.Range = 8
+	light.Brightness = 1.2
+	light.Parent = part
+	CollectionService:AddTag(part, Settings.Tag)
+	part.Parent = folder
+end
+
+local function findSpawnPosition(): Vector3
+	local spawnLocation = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+	if spawnLocation then
+		return spawnLocation.Position
+	end
+	return Vector3.new(0, 5, 0)
+end
+
+local function spawnTestPickups()
+	local old = workspace:FindFirstChild("BrainrotUIPickups")
+	if old then
+		old:Destroy()
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "BrainrotUIPickups"
+	folder.Parent = workspace
+
+	local origin = findSpawnPosition()
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { folder }
+	params.IgnoreWater = false
+	params.RespectCanCollide = true -- land on walkable ground, not on decor (palm leaves, clouds...)
+
+	local placed, tries = 0, 0
+	while placed < Settings.Count and tries < Settings.Count * 8 do
+		tries += 1
+		local angle = rng:NextNumber(0, math.pi * 2)
+		local radius = rng:NextNumber(Settings.MinRadius, Settings.MaxRadius)
+		local x = origin.X + math.cos(angle) * radius
+		local z = origin.Z + math.sin(angle) * radius
+		local hit = workspace:Raycast(Vector3.new(x, origin.Y + 80, z), Vector3.new(0, -300, 0), params)
+		-- flat, dry ground, roughly at the spawn height (not on a roof or a mountain)
+		if hit and hit.Normal.Y > 0.7 and hit.Material ~= Enum.Material.Water and math.abs(hit.Position.Y - origin.Y) < 40 then
+			makePickup(folder, hit.Position + Vector3.new(0, 2.6, 0), rng:NextNumber() < Settings.CoinChance)
+			placed += 1
+		end
+	end
+	if placed < Settings.Count then
+		warn(("[BrainrotUI] Only %d test pickups found room around the spawn"):format(placed))
+	end
+end
+
+function Pickups.Start()
+	CollectionService:GetInstanceAddedSignal(Settings.Tag):Connect(setup)
+	for _, instance in CollectionService:GetTagged(Settings.Tag) do
+		setup(instance)
+	end
+	if Settings.AutoSpawn then
+		task.defer(spawnTestPickups)
+	end
+end
+
+return Pickups
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0008">
+				<Properties>
+					<string name="Name">PlayerData</string>
+					<ProtectedString name="Source"><![CDATA[-- PlayerData: loads, caches, replicates and saves player profiles.
+--
+-- * One DataStore key per player, always written with UpdateAsync.
+-- * A light session lock stops two servers from writing the same profile
+--   (a player who rejoins fast, a teleport): a record locked by another live
+--   server is never overwritten.
+-- * Retries with backoff, autosave, save on leave and on shutdown.
+-- * A profile that could not be loaded is never saved (no wipe with defaults).
+-- * In Studio without API access, profiles live for the session only.
+--
+-- The rest of the server mutates the table returned by PlayerData.Get, then calls
+-- PlayerData.Replicate so attributes and leaderstats follow.
+
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+
+local PlayerData = {}
+
+local KEY_PREFIX = "player_"
+local LOCK_TIMEOUT = 150 -- a lock older than this belongs to a dead server
+local LOAD_ATTEMPTS = 6
+local SAVE_ATTEMPTS = 3
+local MAX_RECEIPTS = 50
+local SHUTDOWN_TIMEOUT = 25
+
+type Profile = {
+	data: { [string]: any },
+	persistent: boolean,
+	saving: boolean,
+	releasing: boolean,
+}
+
+local store: DataStore? = nil
+local profiles: { [Player]: Profile } = {}
+local loadedEvent = Instance.new("BindableEvent")
+
+-- Fired with the player once their profile is ready.
+PlayerData.Loaded = loadedEvent.Event
+
+local function defaultData(): { [string]: any }
+	local data = {
+		Index = {},
+		IndexClaimed = {},
+		Boosts = {},
+		PassRewards = {},
+		Receipts = {},
+		ReceiptOrder = {},
+		FreeSpinAt = 0,
+	}
+	for key, value in Config.StartingData do
+		data[key] = value
+	end
+	return data
+end
+
+-- Fills fields added in later versions, keeps everything else.
+local function reconcile(record: any): { [string]: any }
+	local data = if type(record) == "table" then record else {}
+	for key, value in defaultData() do
+		if data[key] == nil then
+			data[key] = value
+		end
+	end
+	data.Lock = nil
+	return data
+end
+
+local function isLockedElsewhere(lock: any): boolean
+	return type(lock) == "table"
+		and lock.JobId ~= game.JobId
+		and os.time() - (tonumber(lock.Time) or 0) < LOCK_TIMEOUT
+end
+
+local function keyFor(userId: number): string
+	return KEY_PREFIX .. userId
+end
+
+local function openStore()
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(Config.Data.StoreName)
+	end)
+	if not ok then
+		warn("[BrainrotUI] DataStore unavailable, progress is kept for this session only: " .. tostring(result))
+		return
+	end
+	if RunService:IsStudio() then
+		local probeOk, probeError = pcall(function()
+			return result:GetAsync("__probe")
+		end)
+		if not probeOk then
+			warn(
+				"[BrainrotUI] Studio cannot reach DataStores (Game Settings > Security > Enable Studio Access to API Services). "
+					.. "Progress is kept for this session only. "
+					.. tostring(probeError)
+			)
+			return
+		end
+	end
+	store = result
+end
+
+-- Returns (data, persistent) or nil when the profile cannot be loaded safely.
+local function loadAsync(player: Player): ({ [string]: any }?, boolean)
+	local dataStore = store
+	if not dataStore then
+		return defaultData(), false
+	end
+	local key = keyFor(player.UserId)
+	for attempt = 1, LOAD_ATTEMPTS do
+		local lockedElsewhere = false
+		local ok, result = pcall(function()
+			return dataStore:UpdateAsync(key, function(old)
+				if type(old) == "table" and isLockedElsewhere(old.Lock) then
+					lockedElsewhere = true
+					return nil -- leave the record untouched
+				end
+				local record = if type(old) == "table" then old else defaultData()
+				record.Lock = { JobId = game.JobId, Time = os.time() }
+				return record
+			end)
+		end)
+		if ok and not lockedElsewhere then
+			return reconcile(result), true
+		end
+		if not ok then
+			warn(("[BrainrotUI] Load attempt %d failed for %s: %s"):format(attempt, player.Name, tostring(result)))
+		end
+		if player.Parent ~= Players then
+			return nil, false
+		end
+		task.wait(if lockedElsewhere then 5 else math.min(2 ^ attempt, 10))
+	end
+	return nil, false
+end
+
+-- One UpdateAsync write. Never overwrites a record another live server holds.
+local function writeAsync(userId: number, data: { [string]: any }, release: boolean): boolean
+	local dataStore = store
+	if not dataStore then
+		return true
+	end
+	local snapshot = table.clone(data)
+	snapshot.Lock = if release then nil else { JobId = game.JobId, Time = os.time() }
+	local stolen = false
+	local ok, err = pcall(function()
+		dataStore:UpdateAsync(keyFor(userId), function(old)
+			if type(old) == "table" and isLockedElsewhere(old.Lock) then
+				stolen = true
+				return nil
+			end
+			return snapshot
+		end)
+	end)
+	if stolen then
+		warn(("[BrainrotUI] Profile %d is held by another server, save skipped"):format(userId))
+		return false
+	end
+	if not ok then
+		warn(("[BrainrotUI] Save failed for %d: %s"):format(userId, tostring(err)))
+	end
+	return ok
+end
+
+local function setAttribute(player: Player, name: string, value: any)
+	if player:GetAttribute(name) ~= value then
+		player:SetAttribute(name, value)
+	end
+end
+
+local function setupLeaderstats(player: Player)
+	local folder = player:FindFirstChild("leaderstats")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "leaderstats"
+		folder.Parent = player
+	end
+	for _, stat in Config.Leaderstats do
+		if not folder:FindFirstChild(stat.Name) then
+			local value = Instance.new("IntValue")
+			value.Name = stat.Name
+			value.Parent = folder
+		end
+	end
+end
+
+-- Pushes the profile to player attributes (read by the client) and leaderstats.
+function PlayerData.Replicate(player: Player)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	local data = profile.data
+	for _, key in { "Coins", "Gems", "Power", "Rebirths", "Spins", "FreeSpinAt" } do
+		setAttribute(player, key, data[key] or 0)
+	end
+	for name in Config.Boosts do
+		setAttribute(player, "Boost_" .. name, data.Boosts[name] or 0)
+	end
+	for _, item in Config.Index do
+		setAttribute(player, "Idx_" .. item.Id, data.Index[item.Id] or 0)
+	end
+	for _, rarity in Config.Rarities do
+		setAttribute(player, "Claim_" .. rarity.Key, data.IndexClaimed[rarity.Key] == true)
+	end
+	local folder = player:FindFirstChild("leaderstats")
+	if folder then
+		for _, stat in Config.Leaderstats do
+			local value = folder:FindFirstChild(stat.Name)
+			if value and value:IsA("IntValue") then
+				value.Value = math.floor(data[stat.Key] or 0)
+			end
+		end
+	end
+end
+
+-- The live profile table, or nil while loading / after leaving.
+function PlayerData.Get(player: Player): { [string]: any }?
+	local profile = profiles[player]
+	return if profile then profile.data else nil
+end
+
+-- Waits for the profile (used by ProcessReceipt, which can run before loading ends).
+function PlayerData.WaitForData(player: Player, timeout: number): { [string]: any }?
+	local deadline = os.clock() + timeout
+	while not profiles[player] and player.Parent == Players and os.clock() < deadline do
+		task.wait(0.25)
+	end
+	return PlayerData.Get(player)
+end
+
+-- Remembers a processed purchase so a retried receipt is never granted twice.
+function PlayerData.RecordReceipt(player: Player, purchaseId: string)
+	local data = PlayerData.Get(player)
+	if not data then
+		return
+	end
+	data.Receipts[purchaseId] = true
+	table.insert(data.ReceiptOrder, purchaseId)
+	while #data.ReceiptOrder > MAX_RECEIPTS do
+		local oldest = table.remove(data.ReceiptOrder, 1)
+		data.Receipts[oldest] = nil
+	end
+end
+
+-- Saves now. Returns true when the profile is safely stored (or session-only).
+function PlayerData.SaveAsync(player: Player, release: boolean?): boolean
+	local profile = profiles[player]
+	if not profile then
+		return false
+	end
+	if not profile.persistent then
+		return true
+	end
+	while profile.saving do
+		task.wait(0.1)
+	end
+	profile.saving = true
+	local ok = false
+	for attempt = 1, SAVE_ATTEMPTS do
+		ok = writeAsync(player.UserId, profile.data, release == true)
+		if ok then
+			break
+		end
+		task.wait(attempt)
+	end
+	profile.saving = false
+	return ok
+end
+
+-- Final save + lock release, then forget the profile. Safe to call twice.
+local function releaseAsync(player: Player)
+	local profile = profiles[player]
+	if not profile or profile.releasing then
+		return
+	end
+	profile.releasing = true
+	PlayerData.SaveAsync(player, true)
+	profiles[player] = nil
+end
+
+local function onPlayerAdded(player: Player)
+	local data, persistent = loadAsync(player)
+	if player.Parent ~= Players then
+		-- left while loading: give the lock back
+		if data and persistent then
+			writeAsync(player.UserId, data, true)
+		end
+		return
+	end
+	if not data then
+		player:Kick(Config.Text.DataLoadFailed)
+		return
+	end
+	profiles[player] = { data = data, persistent = persistent, saving = false, releasing = false }
+	setupLeaderstats(player)
+	PlayerData.Replicate(player)
+	player:SetAttribute("DataSaved", persistent)
+	player:SetAttribute("DataReady", true)
+	loadedEvent:Fire(player)
+end
+
+local function startAutosave()
+	local elapsed = 0
+	RunService.Heartbeat:Connect(function(dt)
+		elapsed += dt
+		if elapsed < Config.Data.AutosaveInterval then
+			return
+		end
+		elapsed = 0
+		for player, profile in profiles do
+			if profile.persistent and not profile.saving and not profile.releasing then
+				task.spawn(PlayerData.SaveAsync, player, false)
+			end
+		end
+	end)
+end
+
+function PlayerData.Start()
+	openStore()
+	Players.PlayerAdded:Connect(onPlayerAdded)
+	Players.PlayerRemoving:Connect(releaseAsync)
+	for _, player in Players:GetPlayers() do
+		task.spawn(onPlayerAdded, player)
+	end
+	startAutosave()
+	game:BindToClose(function()
+		for player in profiles do
+			task.spawn(releaseAsync, player)
+		end
+		local deadline = os.clock() + SHUTDOWN_TIMEOUT
+		while next(profiles) ~= nil and os.clock() < deadline do
+			task.wait(0.2)
+		end
+	end)
+end
+
+return PlayerData
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0009">
+				<Properties>
+					<string name="Name">Store</string>
+					<ProtectedString name="Source"><![CDATA[-- Store: Robux purchases. Owns the ONLY MarketplaceService.ProcessReceipt of the game
+-- (Roblox keeps a single callback: a second script setting it silently wins).
+--
+-- * Developer products are granted in ProcessReceipt, saved, then confirmed.
+--   A receipt already processed is never granted twice.
+-- * Game passes: ownership is checked on join and after a purchase, the
+--   one-time rewards are remembered in the profile.
+-- * Paid random items (wheel spins) are flagged for players whose country
+--   restricts them (PolicyService), the client hides those offers.
+
+local Players = game:GetService("Players")
+local MarketplaceService = game:GetService("MarketplaceService")
+local PolicyService = game:GetService("PolicyService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
+local Economy = require(script.Parent:WaitForChild("Economy"))
+
+local Text = Config.Text
+
+local Store = {}
+
+local function grantPass(player: Player, pass: { [string]: any })
+	player:SetAttribute("Pass_" .. pass.Key, true)
+	local data = PlayerData.Get(player)
+	if not data or not pass.Rewards or data.PassRewards[pass.Key] then
+		return
+	end
+	data.PassRewards[pass.Key] = true
+	Economy.Add(player, pass.Rewards)
+	Economy.Notify(player, Text.PassRewardGranted:format(pass.Name), "reward")
+	task.spawn(PlayerData.SaveAsync, player, false)
+end
+
+local function checkPasses(player: Player)
+	for _, pass in Config.GamePasses do
+		if pass.Id and pass.Id > 0 then
+			local ok, owns = pcall(function()
+				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, pass.Id)
+			end)
+			if ok and owns then
+				grantPass(player, pass)
+			end
+		end
+	end
+end
+
+local function checkPolicy(player: Player)
+	local ok, info = pcall(function()
+		return PolicyService:GetPolicyInfoForPlayerAsync(player)
+	end)
+	-- when the policy is unknown, stay on the safe side and hide paid random items
+	local restricted = not ok or type(info) ~= "table" or info.ArePaidRandomItemsRestricted == true
+	player:SetAttribute("PaidRandomRestricted", restricted)
+end
+
+local function onPlayerReady(player: Player)
+	task.spawn(checkPolicy, player)
+	task.spawn(checkPasses, player)
+end
+
+local function onPassPurchaseFinished(player: Player, passId: number, purchased: boolean)
+	if not purchased then
+		return
+	end
+	local pass = Rules.PassById[passId]
+	if pass then
+		grantPass(player, pass)
+		Economy.Notify(player, Text.ThanksPurchase, "success")
+		Economy.Reward(player, { Pass = pass.Key })
+	end
+end
+
+local function grantProduct(player: Player, product: { [string]: any })
+	local grant = product.Grant or {}
+	if grant.RebirthSkip then
+		Economy.Rebirth(player, true)
+	else
+		Economy.Add(player, grant)
+	end
+end
+
+local function processReceipt(info: { [string]: any })
+	local player = Players:GetPlayerByUserId(info.PlayerId)
+	if not player then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	local data = PlayerData.WaitForData(player, 15)
+	if not data then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	local purchaseId = tostring(info.PurchaseId)
+	if data.Receipts[purchaseId] then
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	end
+	local product = Rules.ProductById[info.ProductId]
+	if not product then
+		warn(("[BrainrotUI] Unknown developer product %s: add it to UIConfig.Products"):format(tostring(info.ProductId)))
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	grantProduct(player, product)
+	PlayerData.RecordReceipt(player, purchaseId)
+	if not PlayerData.SaveAsync(player, false) then
+		-- granted in memory and remembered: a retry in this session will not grant it again
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	Economy.Notify(player, Text.ThanksPurchase, "success")
+	Economy.Reward(player, { Product = product.Key })
+	return Enum.ProductPurchaseDecision.PurchaseGranted
+end
+
+function Store.Start()
+	MarketplaceService.ProcessReceipt = processReceipt
+	MarketplaceService.PromptGamePassPurchaseFinished:Connect(onPassPurchaseFinished)
+	PlayerData.Loaded:Connect(onPlayerReady)
+	for _, player in Players:GetPlayers() do
+		if PlayerData.Get(player) then
+			onPlayerReady(player)
+		end
+	end
+end
+
+return Store
+]]></ProtectedString>
+				</Properties>
+			</Item>
+		</Item>
+		<Item class="LocalScript" referent="RBX0010">
+			<Properties>
+				<string name="Name">BrainrotUIClient</string>
+				<ProtectedString name="Source"><![CDATA[-- BrainrotUI client: builds the interface in code and wires it to the server.
+-- The server decides everything; this script only displays and asks.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local SocialService = game:GetService("SocialService")
+
+local player = Players.LocalPlayer
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local remotes = shared:WaitForChild("Remotes")
+local requestRemote = remotes:WaitForChild("Request") :: RemoteFunction
+
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local Widgets = require(script:WaitForChild("Widgets"))
+local State = require(script:WaitForChild("State"))
+local Notify = require(script:WaitForChild("Notify"))
+local Effects = require(script:WaitForChild("Effects"))
+local Windows = require(script:WaitForChild("Windows"))
+local Purchases = require(script:WaitForChild("Purchases"))
+local Hud = require(script:WaitForChild("Hud"))
+local ShopWindow = require(script:WaitForChild("ShopWindow"))
+local RebirthWindow = require(script:WaitForChild("RebirthWindow"))
+local IndexWindow = require(script:WaitForChild("IndexWindow"))
+local WheelWindow = require(script:WaitForChild("WheelWindow"))
+local PickupFx = require(script:WaitForChild("PickupFx"))
+
+local Text = Config.Text
+
+-- Server request that never throws: always returns a table with `ok`.
+local function request(action: string, argument: any?): { [string]: any }
+	local ok, result = pcall(function()
+		return requestRemote:InvokeServer(action, argument)
+	end)
+	if ok and type(result) == "table" then
+		return result
+	end
+	return { ok = false, message = Text.GenericError }
+end
+
+local function invite()
+	local ok, canInvite = pcall(function()
+		return SocialService:CanSendGameInviteAsync(player)
+	end)
+	if ok and canInvite then
+		pcall(function()
+			SocialService:PromptGameInvite(player)
+		end)
+	else
+		Notify.show(Text.InviteUnavailable, "info")
+	end
+end
+
+-- Screen ----------------------------------------------------------------------
+
+local playerGui = player:WaitForChild("PlayerGui")
+local previous = playerGui:FindFirstChild("BrainrotUI")
+if previous then
+	previous:Destroy()
+end
+local screenGui = Widgets.create("ScreenGui", {
+	Name = "BrainrotUI",
+	ResetOnSpawn = false,
+	IgnoreGuiInset = false,
+	ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	DisplayOrder = 5,
+	Parent = playerGui,
+}) :: ScreenGui
+
+Widgets.init(screenGui)
+Notify.init(screenGui)
+Effects.init(screenGui)
+Windows.init(screenGui)
+Purchases.init()
+
+Hud.build(screenGui, {
+	OpenShop = function()
+		Windows.open("Shop")
+	end,
+	OpenRebirth = function()
+		Windows.open("Rebirth")
+	end,
+	OpenIndex = function()
+		Windows.open("Index")
+	end,
+	OpenWheel = function()
+		Windows.open("Wheel")
+	end,
+	Invite = invite,
+})
+ShopWindow.build()
+RebirthWindow.build(request)
+IndexWindow.build(request)
+WheelWindow.build(request)
+PickupFx.start(Config.Pickups.Tag)
+
+-- HUD badges -------------------------------------------------------------------
+
+local function refreshBadges()
+	local rebirth = Hud.getTile("Rebirth")
+	if rebirth then
+		rebirth.Badge.Set(if RebirthWindow.isReady() then "!" else nil)
+	end
+	local wheel = Hud.getTile("Wheel")
+	if wheel then
+		local spins = WheelWindow.availableSpins()
+		wheel.Badge.Set(if spins > 0 then tostring(math.min(spins, 99)) else nil)
+	end
+	local index = Hud.getTile("Index")
+	if index then
+		index.Badge.Set(if IndexWindow.hasNews() then "!" else nil)
+	end
+end
+
+State.onAnyChange(refreshBadges)
+IndexWindow.onChanged(refreshBadges)
+refreshBadges()
+
+-- Server messages ------------------------------------------------------------------
+
+local notifyRemote = remotes:WaitForChild("Notify") :: RemoteEvent
+local rewardRemote = remotes:WaitForChild("Reward") :: RemoteEvent
+
+notifyRemote.OnClientEvent:Connect(function(text, kind)
+	if type(text) == "string" then
+		Notify.show(text, kind)
+	end
+end)
+
+rewardRemote.OnClientEvent:Connect(function(payload)
+	if type(payload) ~= "table" then
+		return
+	end
+	if payload.Stat and type(payload.Amount) == "number" then
+		Hud.showGain(payload.Stat, payload.Amount)
+	end
+	if payload.Item and payload.New then
+		local item = Rules.ItemById[payload.Item]
+		if item then
+			IndexWindow.markNew(item.Id)
+			Notify.show(Text.IndexNewItem:format(item.Name), "reward")
+		end
+	end
+	local product = payload.Product and Rules.ProductByKey[payload.Product]
+	if product then
+		local grant = product.Grant or {}
+		local info = Rules.describe(grant)
+		if grant.RebirthSkip then
+			Effects.rewardPopup("🔁", Text.RebirthDone, nil, Widgets.Theme.Purple)
+		elseif grant.Boosts then
+			Effects.rewardPopup(product.Icon or info.Icon, product.Name, Text.BoostStarted:format(product.Name), Widgets.Theme.Gold)
+		else
+			Effects.rewardPopup(product.Icon or info.Icon, "+" .. info.Long, nil, Widgets.Theme.Gold)
+		end
+	end
+	local pass = payload.Pass and Rules.PassByKey[payload.Pass]
+	if pass then
+		Effects.rewardPopup(pass.Icon, pass.Name, Text.ThanksPurchase, pass.Colors[1])
+	end
+end)
+
+-- Once-per-second refresh (countdowns, boosts, free spin) -----------------------------
+
+local elapsed = 1
+RunService.Heartbeat:Connect(function(dt)
+	elapsed += dt
+	if elapsed < 1 then
+		return
+	end
+	elapsed = 0
+	Hud.tick()
+	if Windows.isOpen("Wheel") then
+		WheelWindow.refresh()
+	end
+	refreshBadges()
+end)
+
+-- Warn testers when progress is not saved (Studio without API access).
+task.spawn(function()
+	while player:GetAttribute("DataReady") ~= true do
+		player:GetAttributeChangedSignal("DataReady"):Wait()
+	end
+	if player:GetAttribute("DataSaved") == false then
+		Notify.show(Text.SessionOnly, "info", 6)
+	end
+end)
+]]></ProtectedString>
+			</Properties>
+			<Item class="ModuleScript" referent="RBX0011">
+				<Properties>
+					<string name="Name">Effects</string>
+					<ProtectedString name="Source"><![CDATA[-- Effects: sunbursts, reward popup, floating numbers and the purchase overlay.
+
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage:WaitForChild("BrainrotUI"):WaitForChild("UIConfig"))
+local Widgets = require(script.Parent:WaitForChild("Widgets"))
+
+local Theme = Widgets.Theme
+local create = Widgets.create
+
+local Effects = {}
+
+local screenGui: ScreenGui? = nil
+local overlay: Frame? = nil
+local popupOpen: GuiObject? = nil
+
+local function spinForever(instance: GuiObject, secondsPerTurn: number)
+	instance.Rotation = 0
+	TweenService:Create(instance, TweenInfo.new(secondsPerTurn, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = 360 }):Play()
+end
+
+-- Rotating rays behind a highlighted element. Options: Size, Position,
+-- AnchorPoint, Color, Rays, SecondsPerTurn, ZIndex, Parent.
+function Effects.sunburst(options: { [string]: any }): Frame
+	local root = Widgets.frame({
+		Name = "Sunburst",
+		Size = options.Size,
+		Position = options.Position or UDim2.fromScale(0.5, 0.5),
+		AnchorPoint = options.AnchorPoint or Vector2.new(0.5, 0.5),
+		ZIndex = options.ZIndex or 1,
+		Parent = options.Parent,
+	})
+	local rays = options.Rays or 8
+	local fade = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0.5, 0.25),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	for index = 1, rays do
+		-- each bar is two opposite rays
+		create("Frame", {
+			Name = "Ray",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(0.12, 1),
+			Rotation = (index - 1) * 180 / rays,
+			BackgroundColor3 = options.Color or Theme.Gold,
+			ZIndex = options.ZIndex or 1,
+			Parent = root,
+		}, { create("UIGradient", { Rotation = 90, Transparency = fade }) })
+	end
+	spinForever(root, options.SecondsPerTurn or 12)
+	return root
+end
+
+-- "+25" rising from a HUD element and fading away.
+function Effects.floatText(anchor: GuiObject, text: string, colors: { Color3 }, strokeColor: Color3?)
+	local label = Widgets.text({
+		Name = "Float",
+		Text = text,
+		Font = "Title",
+		TextSize = 26,
+		Stroke = 3,
+		StrokeColor = strokeColor,
+		XAlign = Enum.TextXAlignment.Left,
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(1, 8, 0.5, 0),
+		Size = UDim2.fromOffset(140, 30),
+		ZIndex = 10,
+		Parent = anchor,
+	})
+	Widgets.gradient(colors, 90).Parent = label
+	local stroke = label:FindFirstChildOfClass("UIStroke")
+	Widgets.tween(label, 0.9, { Position = UDim2.new(1, 8, 0.5, -34), TextTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	if stroke then
+		Widgets.tween(stroke, 0.9, { Transparency = 1 })
+	end
+	task.delay(0.95, function()
+		label:Destroy()
+	end)
+end
+
+-- Short scale "pop" on an element (for example a counter that just went up).
+function Effects.pop(guiObject: GuiObject)
+	local scale = guiObject:FindFirstChild("PopScale")
+	if not scale then
+		scale = create("UIScale", { Name = "PopScale", Parent = guiObject })
+	end
+	(scale :: UIScale).Scale = 1.18
+	Widgets.tween(scale :: UIScale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+end
+
+-- Big centred popup for a reward: icon, title, subtitle, rotating rays.
+function Effects.rewardPopup(icon: string, title: string, subtitle: string?, color: Color3?)
+	local gui = screenGui
+	if not gui then
+		return
+	end
+	if popupOpen then
+		popupOpen:Destroy()
+	end
+	Widgets.playSound("Reward")
+	local root = create("TextButton", {
+		Name = "RewardPopup",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 90,
+		Parent = gui,
+	})
+	popupOpen = root
+	local card = Widgets.frame({
+		Name = "Card",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.46),
+		Size = UDim2.fromOffset(360, 330),
+		ZIndex = 90,
+		Parent = root,
+	})
+	Widgets.attachHudScale(card)
+	local holder = Widgets.frame({ Name = "Pop", Size = UDim2.fromScale(1, 1), ZIndex = 90, Parent = card })
+	local pop = create("UIScale", { Scale = 0, Parent = holder })
+	Effects.sunburst({
+		Parent = holder,
+		Size = UDim2.fromOffset(420, 420),
+		Position = UDim2.fromOffset(180, 120),
+		Color = color or Theme.Gold,
+		Rays = 10,
+		SecondsPerTurn = 8,
+		ZIndex = 90,
+	})
+	Widgets.text({ Name = "Icon", Text = icon, TextSize = 96, Stroke = false, Position = UDim2.fromOffset(0, 60), Size = UDim2.new(1, 0, 0, 120), ZIndex = 91, Parent = holder })
+	local titleLabel = Widgets.text({
+		Name = "Title",
+		Text = title,
+		Font = "Title",
+		TextSize = 46,
+		Stroke = 4,
+		Position = UDim2.fromOffset(-40, 196),
+		Size = UDim2.new(1, 80, 0, 56),
+		ZIndex = 92,
+		Parent = holder,
+	})
+	Widgets.gradient({ Color3.fromRGB(255, 250, 190), color or Theme.Gold }, 90).Parent = titleLabel
+	if subtitle then
+		Widgets.text({ Name = "Subtitle", Text = subtitle, TextSize = 24, Position = UDim2.fromOffset(-40, 252), Size = UDim2.new(1, 80, 0, 30), ZIndex = 92, Parent = holder })
+	end
+
+	Widgets.tween(root, 0.2, { BackgroundTransparency = 0.5 })
+	Widgets.tween(pop, 0.4, { Scale = 1 }, Enum.EasingStyle.Back)
+	local closed = false
+	local function close()
+		if closed then
+			return
+		end
+		closed = true
+		Widgets.tween(root, 0.2, { BackgroundTransparency = 1 })
+		Widgets.tween(pop, 0.2, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In).Completed:Once(function()
+			root:Destroy()
+			if popupOpen == root then
+				popupOpen = nil
+			end
+		end)
+	end
+	root.Activated:Connect(close)
+	task.delay(2.4, close)
+end
+
+-- Dims the screen while a Roblox purchase prompt is open.
+function Effects.purchaseOverlay(visible: boolean)
+	local frame = overlay
+	if frame then
+		frame.Visible = visible
+	end
+end
+
+local function buildOverlay(gui: ScreenGui)
+	local frame = create("Frame", {
+		Name = "PurchaseOverlay",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		Active = true,
+		Visible = false,
+		ZIndex = 95,
+		Parent = gui,
+	})
+	local card = Widgets.panel({
+		Name = "Card",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(300, 84),
+		BackgroundColor3 = Theme.Panel,
+		ZIndex = 96,
+		Parent = frame,
+	})
+	Widgets.attachHudScale(card)
+	local spinner = Widgets.circle({
+		Name = "Spinner",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 22, 0.5, 0),
+		Size = UDim2.fromOffset(40, 40),
+		BackgroundTransparency = 1,
+		ZIndex = 97,
+		Parent = card,
+	})
+	local ring = create("UIStroke", { Thickness = 6, Color = Theme.Gold, Parent = spinner })
+	create("UIGradient", {
+		Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.6, 0.1), NumberSequenceKeypoint.new(1, 1) }),
+		Parent = ring,
+	})
+	spinForever(spinner, 0.9)
+	Widgets.text({
+		Text = Config.Text.Buying,
+		TextSize = 24,
+		XAlign = Enum.TextXAlignment.Left,
+		Position = UDim2.fromOffset(80, 0),
+		Size = UDim2.new(1, -90, 1, 0),
+		ZIndex = 97,
+		Parent = card,
+	})
+	overlay = frame
+end
+
+function Effects.init(gui: ScreenGui)
+	screenGui = gui
+	buildOverlay(gui)
+end
+
+return Effects
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0012">
+				<Properties>
+					<string name="Name">Hud</string>
+					<ProtectedString name="Source"><![CDATA[-- Hud: what stays on screen. Left: currency counters and the menu buttons.
+-- Right: the featured offer and the running boosts.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local Format = require(shared:WaitForChild("Format"))
+local Widgets = require(script.Parent:WaitForChild("Widgets"))
+local State = require(script.Parent:WaitForChild("State"))
+local Windows = require(script.Parent:WaitForChild("Windows"))
+local Effects = require(script.Parent:WaitForChild("Effects"))
+local Purchases = require(script.Parent:WaitForChild("Purchases"))
+
+local Theme = Widgets.Theme
+local Text = Config.Text
+local create = Widgets.create
+
+local Hud = {}
+
+export type Tile = Widgets.Button & { Badge: Widgets.Badge }
+
+local TILE_ORDER = { "Shop", "Wheel", "Rebirth", "Invite", "Index" }
+local TILE_STEP = 100 -- tile size (86) + gap
+
+local RAINBOW = {
+	Color3.fromRGB(255, 70, 70),
+	Color3.fromRGB(255, 200, 40),
+	Color3.fromRGB(80, 230, 90),
+	Color3.fromRGB(60, 200, 255),
+	Color3.fromRGB(170, 90, 255),
+	Color3.fromRGB(255, 70, 70),
+}
+
+local pills: { [string]: { Frame: Frame, Value: TextLabel, Icon: Frame } } = {}
+local tiles: { [string]: Tile } = {}
+local boostList: Frame? = nil
+local boostChips: { [string]: { Frame: Frame, Label: TextLabel } } = {}
+
+-- Currency counter -------------------------------------------------------------
+
+local function makePill(parent: Frame, currency: { [string]: any }, index: number, openShop: () -> ())
+	local frame = Widgets.frame({
+		Name = currency.Key,
+		Size = UDim2.fromOffset(206, 42),
+		Position = UDim2.fromOffset(0, (index - 1) * 50),
+		Parent = parent,
+	})
+	create("Frame", {
+		Name = "Pill",
+		Position = UDim2.fromOffset(18, 3),
+		Size = UDim2.new(1, -18, 1, -6),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		Parent = frame,
+	}, { Widgets.round(), Widgets.stroke(3) })
+	local icon = Widgets.circle({
+		Name = "Icon",
+		Size = UDim2.fromOffset(42, 42),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		ZIndex = 2,
+		Parent = frame,
+	}, { Widgets.stroke(3), Widgets.gradient(currency.Colors, 90) })
+	Widgets.text({ Text = currency.Icon, TextSize = 24, Stroke = false, ZIndex = 3, Parent = icon })
+	local value = Widgets.text({
+		Name = "Value",
+		Text = "0",
+		Font = "Title",
+		TextSize = 26,
+		Stroke = 3,
+		StrokeColor = currency.Stroke,
+		XAlign = Enum.TextXAlignment.Left,
+		Position = UDim2.fromOffset(50, 2),
+		Size = UDim2.new(1, if currency.ShopShortcut then -86 else -56, 1, 0),
+		ZIndex = 2,
+		Parent = frame,
+	})
+	Widgets.gradient(currency.Colors, 90).Parent = value
+	if currency.ShopShortcut then
+		Widgets.button({
+			Name = "Plus",
+			Parent = frame,
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -4, 0.5, 0),
+			Size = UDim2.fromOffset(30, 30),
+			Color = Theme.Green,
+			Text = "+",
+			TextSize = 24,
+			Radius = 10,
+			Depth = 3,
+			ZIndex = 3,
+			OnClick = openShop,
+		})
+	end
+	pills[currency.Key] = { Frame = frame, Value = value, Icon = icon }
+
+	-- animated count towards the new value
+	local shown = create("NumberValue", { Name = "Shown", Parent = frame })
+	shown.Changed:Connect(function(number)
+		value.Text = Format.short(number)
+	end)
+	local last: number? = nil
+	State.observe(currency.Key, function(raw)
+		local target = tonumber(raw) or 0
+		if last == nil then
+			shown.Value = target
+			value.Text = Format.short(target)
+		else
+			Widgets.tween(shown, 0.45, { Value = target })
+			if target > last then
+				Effects.pop(icon)
+			end
+		end
+		last = target
+	end)
+end
+
+-- Menu button ------------------------------------------------------------------
+
+local function makeTile(parent: Frame, options: { [string]: any }): Tile
+	local tile = Widgets.button({
+		Name = options.Name,
+		Parent = parent,
+		Size = UDim2.fromOffset(86, 86),
+		Position = options.Position,
+		Color = options.Color,
+		Text = "",
+		Radius = 18,
+		Depth = 6,
+		OnClick = options.OnClick,
+	}) :: Tile
+	Widgets.text({
+		Name = "Icon",
+		Text = options.Icon,
+		TextSize = 44,
+		Stroke = false,
+		Position = UDim2.fromOffset(0, 4),
+		Size = UDim2.new(1, 0, 0, 56),
+		ZIndex = 2,
+		Parent = tile.Face,
+	})
+	Widgets.text({
+		Name = "Caption",
+		Text = options.Text,
+		Font = "Title",
+		TextSize = 19,
+		Scaled = true,
+		Stroke = 3,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, 8),
+		Size = UDim2.new(1, 12, 0, 26),
+		ZIndex = 3,
+		Parent = tile.Face,
+	})
+	tile.Badge = Widgets.badge(tile.Instance)
+	tiles[options.Name] = tile
+	return tile
+end
+
+-- Animated rainbow outline (used on the shop button).
+local function rainbowOutline(tile: Tile)
+	local stroke = tile.Base:FindFirstChildOfClass("UIStroke")
+	if not stroke then
+		return
+	end
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Thickness = 4
+	local gradient = Widgets.gradient(RAINBOW, 0)
+	gradient.Parent = stroke
+	game:GetService("TweenService")
+		:Create(gradient, TweenInfo.new(2.5, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = 360 })
+		:Play()
+end
+
+-- Featured offer ------------------------------------------------------------------
+
+local function makeOffer(parent: Frame)
+	local product = Rules.ProductByKey.Offer
+	if not product then
+		return
+	end
+	local group = Widgets.frame({
+		Name = "Offer",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(90, 92),
+		Size = UDim2.fromOffset(180, 184),
+		Parent = parent,
+	})
+	Windows.registerHud(group)
+	Effects.sunburst({ Parent = group, Size = UDim2.fromOffset(230, 230), Position = UDim2.fromOffset(90, 84), Rays = 8, Color = Theme.Gold })
+	local button = create("TextButton", {
+		Name = "Button",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 8),
+		Size = UDim2.fromOffset(140, 160),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 2,
+		Parent = group,
+	})
+	local hover = create("UIScale", { Parent = button })
+	local tag = create("Frame", {
+		Name = "Tag",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0),
+		Size = UDim2.fromOffset(96, 28),
+		BackgroundColor3 = Theme.Red,
+		Rotation = -6,
+		ZIndex = 4,
+		Parent = button,
+	}, { Widgets.round(), Widgets.stroke(3), Widgets.shading() })
+	Widgets.text({ Text = Text.OfferTag, Font = "Title", TextSize = 19, Stroke = 2.5, ZIndex = 5, Position = UDim2.fromOffset(0, 2), Parent = tag })
+	Widgets.text({ Name = "Icon", Text = product.Icon or "💰", TextSize = 70, Stroke = false, Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 80), ZIndex = 3, Parent = button })
+	local amount = Widgets.text({
+		Name = "Amount",
+		Text = "+" .. Rules.describe(product.Grant).Short,
+		Font = "Title",
+		TextSize = 32,
+		Stroke = 3.5,
+		StrokeColor = Color3.fromRGB(80, 45, 0),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 96),
+		Size = UDim2.fromOffset(180, 36),
+		ZIndex = 4,
+		Parent = button,
+	})
+	Widgets.gradient({ Color3.fromRGB(255, 250, 170), Theme.Gold }, 90).Parent = amount
+	local price = create("Frame", {
+		Name = "Price",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 132),
+		Size = UDim2.fromOffset(104, 30),
+		BackgroundColor3 = Theme.Green,
+		ZIndex = 4,
+		Parent = button,
+	}, { Widgets.round(), Widgets.stroke(3), Widgets.shading() })
+	local priceLabel = Widgets.text({ Text = "", Font = "Title", TextSize = 20, ZIndex = 5, Position = UDim2.fromOffset(0, 2), Parent = price })
+	Purchases.observePrice("Product", "Offer", function(text)
+		priceLabel.Text = text
+	end)
+
+	-- gentle floating
+	game:GetService("TweenService")
+		:Create(button, TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Position = UDim2.new(0.5, 0, 0, 2) })
+		:Play()
+	button.MouseEnter:Connect(function()
+		Widgets.tween(hover, 0.12, { Scale = 1.07 })
+	end)
+	button.MouseLeave:Connect(function()
+		Widgets.tween(hover, 0.12, { Scale = 1 })
+	end)
+	button.Activated:Connect(function()
+		Widgets.playSound("Click")
+		Purchases.prompt("Product", "Offer")
+	end)
+end
+
+-- Running boosts -------------------------------------------------------------------
+
+local function refreshBoosts()
+	local list = boostList
+	if not list then
+		return
+	end
+	local now = State.serverNow()
+	for name, boost in Config.Boosts do
+		local remaining = State.number("Boost_" .. name) - now
+		local chip = boostChips[name]
+		if remaining > 0 then
+			if not chip then
+				local frame = create("Frame", {
+					Name = name,
+					Size = UDim2.fromOffset(176, 34),
+					BackgroundColor3 = Theme.Panel,
+					BackgroundTransparency = 0.1,
+					Parent = list,
+				}, { Widgets.round(), Widgets.stroke(3) })
+				local label = Widgets.text({
+					Text = "",
+					TextSize = 18,
+					Scaled = true,
+					XAlign = Enum.TextXAlignment.Left,
+					Position = UDim2.fromOffset(12, 3),
+					Size = UDim2.new(1, -20, 1, -6),
+					Parent = frame,
+				})
+				chip = { Frame = frame, Label = label }
+				boostChips[name] = chip
+			end
+			(chip :: any).Label.Text = ("%s %s  %s"):format(boost.Icon, boost.Label, Format.clock(remaining))
+		elseif chip then
+			chip.Frame:Destroy()
+			boostChips[name] = nil
+		end
+	end
+end
+
+-- Public -----------------------------------------------------------------------------
+
+function Hud.getTile(name: string): Tile?
+	return tiles[name]
+end
+
+-- Floating "+N" next to a counter after a gain.
+function Hud.showGain(stat: string, amount: number)
+	local pill = pills[stat]
+	local currency = Rules.CurrencyByKey[stat]
+	if pill and currency and amount > 0 then
+		Effects.floatText(pill.Frame, "+" .. Format.short(amount), currency.Colors, currency.Stroke)
+	end
+end
+
+-- Called once per second by the client loop.
+function Hud.tick()
+	refreshBoosts()
+end
+
+-- callbacks: OpenShop, OpenRebirth, OpenIndex, OpenWheel, Invite
+function Hud.build(screenGui: ScreenGui, callbacks: { [string]: () -> () })
+	local left = Widgets.frame({
+		Name = "HudLeft",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 12, 0.54, 0),
+		Size = UDim2.fromOffset(206, 460),
+		Parent = screenGui,
+	})
+	Widgets.attachHudScale(left)
+
+	local currencies = Widgets.frame({
+		Name = "Currencies",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(103, 71),
+		Size = UDim2.fromOffset(206, 142),
+		Parent = left,
+	})
+	Windows.registerHud(currencies)
+	for index, currency in Config.Currencies do
+		makePill(currencies, currency, index, callbacks.OpenShop)
+	end
+
+	local buttons = Widgets.frame({
+		Name = "Buttons",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Parent = left,
+	})
+	Windows.registerHud(buttons)
+	local shop = makeTile(buttons, { Name = "Shop", Text = Text.ShopButton, Icon = "🛒", Color = Theme.Gold, OnClick = callbacks.OpenShop })
+	makeTile(buttons, { Name = "Wheel", Text = Text.WheelButton, Icon = "🎡", Color = Theme.Pink, OnClick = callbacks.OpenWheel })
+	makeTile(buttons, { Name = "Rebirth", Text = Text.RebirthButton, Icon = "🔁", Color = Theme.Purple, OnClick = callbacks.OpenRebirth })
+	makeTile(buttons, { Name = "Invite", Text = Text.InviteButton, Icon = "💌", Color = Theme.Green, OnClick = callbacks.Invite })
+	makeTile(buttons, { Name = "Index", Text = Text.IndexButton, Icon = "📖", Color = Theme.Cyan, OnClick = callbacks.OpenIndex })
+
+	-- 2 columns on tall screens, 3 on short ones (phones in landscape) so the
+	-- buttons stay clear of the thumbstick area
+	local function arrange()
+		local compact = screenGui.AbsoluteSize.Y > 0 and screenGui.AbsoluteSize.Y < 500
+		local columns = if compact then 3 else 2
+		local rows = math.ceil(#TILE_ORDER / columns)
+		for index, name in TILE_ORDER do
+			local column = (index - 1) % columns
+			local row = math.floor((index - 1) / columns)
+			tiles[name].Instance.Position = UDim2.fromOffset(column * TILE_STEP, row * TILE_STEP)
+		end
+		local width, height = columns * TILE_STEP - 14, rows * TILE_STEP - 14
+		buttons.Size = UDim2.fromOffset(width, height)
+		buttons.Position = UDim2.fromOffset(width / 2, 170 + height / 2)
+		left.Size = UDim2.fromOffset(math.max(206, width), 170 + height)
+		left.Position = UDim2.new(0, 12, if compact then 0.5 else 0.54, 0)
+	end
+	arrange()
+	screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(arrange)
+	rainbowOutline(shop)
+
+	local right = Widgets.frame({
+		Name = "HudRight",
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -12, 0.5, 0),
+		Size = UDim2.fromOffset(180, 330),
+		Parent = screenGui,
+	})
+	Widgets.attachHudScale(right)
+	makeOffer(right)
+	local boosts = Widgets.frame({
+		Name = "Boosts",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromOffset(90, 196),
+		Size = UDim2.fromOffset(180, 130),
+		Parent = right,
+	}, { Widgets.list(Enum.FillDirection.Vertical, 6) })
+	Windows.registerHud(boosts)
+	boostList = boosts
+	refreshBoosts()
+end
+
+return Hud
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0013">
+				<Properties>
+					<string name="Name">IndexWindow</string>
+					<ProtectedString name="Source"><![CDATA[-- IndexWindow: the brainrot collection, one tab per rarity. Unfound entries are
+-- hidden behind "?". A complete series gives a gem reward (server checked).
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local Format = require(shared:WaitForChild("Format"))
+local Widgets = require(script.Parent:WaitForChild("Widgets"))
+local State = require(script.Parent:WaitForChild("State"))
+local Windows = require(script.Parent:WaitForChild("Windows"))
+local Notify = require(script.Parent:WaitForChild("Notify"))
+local Effects = require(script.Parent:WaitForChild("Effects"))
+
+local Theme = Widgets.Theme
+local Text = Config.Text
+local create = Widgets.create
+
+local IndexWindow = {}
+
+local WIDTH, HEIGHT = 700, 490
+
+type Card = {
+	Frame: Frame,
+	Icon: TextLabel,
+	Name: TextLabel,
+	Count: Frame,
+	CountLabel: TextLabel,
+	New: Frame,
+}
+
+local cards: { [string]: Card } = {}
+local tabs: { [string]: Widgets.Button & { Badge: Widgets.Badge } } = {}
+local unseen: { [string]: boolean } = {}
+local selected = Config.Rarities[1].Key
+local changedCallbacks: { () -> () } = {}
+
+local function owned(itemId: string): number
+	return State.number("Idx_" .. itemId)
+end
+
+local function foundCount(rarityKey: string): (number, number)
+	local found, total = 0, 0
+	for _, item in Rules.ItemsByRarity[rarityKey] do
+		total += 1
+		if owned(item.Id) > 0 then
+			found += 1
+		end
+	end
+	return found, total
+end
+
+local function claimable(rarityKey: string): boolean
+	local found, total = foundCount(rarityKey)
+	return total > 0 and found == total and State.get("Claim_" .. rarityKey) ~= true
+end
+
+-- True when a series can be claimed or new entries were found (HUD badge).
+function IndexWindow.hasNews(): boolean
+	if next(unseen) ~= nil then
+		return true
+	end
+	for _, rarity in Config.Rarities do
+		if claimable(rarity.Key) then
+			return true
+		end
+	end
+	return false
+end
+
+function IndexWindow.onChanged(callback: () -> ())
+	table.insert(changedCallbacks, callback)
+end
+
+local function notifyChanged()
+	for _, callback in changedCallbacks do
+		callback()
+	end
+end
+
+-- An entry found during this session: highlighted until the Index is opened.
+function IndexWindow.markNew(itemId: string)
+	unseen[itemId] = true
+	notifyChanged()
+end
+
+local function makeCard(parent: Instance, item: { [string]: any }, order: number): Card
+	local rarity = Rules.RarityByKey[item.Rarity]
+	local frame = create("Frame", {
+		Name = item.Id,
+		BackgroundColor3 = Widgets.shade(rarity.Color, 0.55),
+		LayoutOrder = order,
+		ZIndex = 33,
+		Parent = parent,
+	}, { Widgets.corner(14), Widgets.stroke(3) })
+	create("Frame", {
+		Name = "Strip",
+		Size = UDim2.new(1, 0, 0, 8),
+		BackgroundColor3 = rarity.Color,
+		ZIndex = 34,
+		Parent = frame,
+	}, { Widgets.corner(14) })
+	local icon = Widgets.text({ Name = "Icon", Text = item.Icon, TextSize = 72, Stroke = false, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 0, 90), ZIndex = 34, Parent = frame })
+	local name = Widgets.text({
+		Name = "Name",
+		Text = item.Name,
+		TextSize = 17,
+		Scaled = true,
+		Wrapped = true,
+		Stroke = 2,
+		Position = UDim2.fromOffset(8, 114),
+		Size = UDim2.new(1, -16, 0, 58),
+		ZIndex = 34,
+		Parent = frame,
+	})
+	local count = create("Frame", {
+		Name = "Count",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -6, 0, 12),
+		Size = UDim2.fromOffset(44, 24),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		ZIndex = 35,
+		Parent = frame,
+	}, { Widgets.round() })
+	local countLabel = Widgets.text({ Text = "x1", Font = "Title", TextSize = 16, Stroke = 2, ZIndex = 36, Position = UDim2.fromOffset(0, 1), Parent = count })
+	local new = create("Frame", {
+		Name = "New",
+		Position = UDim2.fromOffset(-6, 8),
+		Size = UDim2.fromOffset(78, 22),
+		BackgroundColor3 = Theme.Red,
+		Rotation = -10,
+		Visible = false,
+		ZIndex = 37,
+		Parent = frame,
+	}, { Widgets.round(), Widgets.stroke(2) })
+	Widgets.text({ Text = Text.IndexNew, Font = "Title", TextSize = 14, Stroke = 2, ZIndex = 38, Position = UDim2.fromOffset(0, 1), Parent = new })
+	return { Frame = frame, Icon = icon, Name = name, Count = count, CountLabel = countLabel, New = new }
+end
+
+local function refreshCard(item: { [string]: any })
+	local card = cards[item.Id]
+	local count = owned(item.Id)
+	local rarity = Rules.RarityByKey[item.Rarity]
+	if count > 0 then
+		card.Frame.BackgroundColor3 = Widgets.shade(rarity.Color, 0.55)
+		card.Icon.Text = item.Icon
+		card.Icon.FontFace = Font.fromEnum(Theme.BodyFont)
+		card.Icon.TextColor3 = Theme.Text
+		card.Name.Text = item.Name
+		card.Count.Visible = true
+		card.CountLabel.Text = "x" .. Format.short(count)
+	else
+		card.Frame.BackgroundColor3 = Theme.Panel
+		card.Icon.Text = "?"
+		card.Icon.FontFace = Font.fromEnum(Theme.TitleFont)
+		card.Icon.TextColor3 = Theme.Disabled
+		card.Name.Text = Text.IndexLocked
+		card.Count.Visible = false
+	end
+	card.New.Visible = unseen[item.Id] == true
+end
+
+function IndexWindow.build(request: (string, any?) -> { [string]: any })
+	local window = Windows.create("Index", { Title = Text.IndexTitle, Width = WIDTH, Height = HEIGHT, Colors = Theme.Windows.Index })
+	local body = window.Body
+
+	-- rarity tabs
+	local tabRow = Widgets.frame({
+		Name = "Tabs",
+		Position = UDim2.fromOffset(0, 14),
+		Size = UDim2.new(1, 0, 0, 46),
+		ZIndex = 33,
+		Parent = body,
+	}, { Widgets.list(Enum.FillDirection.Horizontal, 10) })
+
+	-- header: progress of the selected series + claim button
+	local header = Widgets.frame({ Name = "Header", Position = UDim2.fromOffset(0, 70), Size = UDim2.new(1, 0, 0, 46), ZIndex = 33, Parent = body })
+	local seriesLabel = Widgets.text({ Name = "Series", Text = "", Font = "Title", TextSize = 26, Stroke = 3, XAlign = Enum.TextXAlignment.Left, Size = UDim2.new(0, 170, 1, 0), ZIndex = 33, Parent = header })
+	local bar = Widgets.progressBar({
+		Name = "Progress",
+		Parent = header,
+		Position = UDim2.new(0, 176, 0.5, -15),
+		Size = UDim2.fromOffset(210, 30),
+		TextSize = 18,
+		Colors = { Theme.Cyan, Theme.Blue },
+	})
+	bar.Instance.ZIndex = 33
+	local claimButton
+	claimButton = Widgets.button({
+		Name = "Claim",
+		Parent = header,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -4, 0.5, 0),
+		Size = UDim2.fromOffset(250, 46),
+		Color = Theme.Green,
+		Text = "",
+		TextSize = 20,
+		Depth = 4,
+		ZIndex = 34,
+		OnClick = function()
+			local rarityKey = selected
+			local result = request("ClaimIndex", rarityKey)
+			if result.ok then
+				Effects.rewardPopup("💎", "+" .. Format.short(result.gems or 0), result.message, Theme.Cyan)
+			else
+				Notify.show(result.message or Text.GenericError, "error")
+			end
+		end,
+	})
+
+	-- grid of entries
+	local grid = create("ScrollingFrame", {
+		Name = "Grid",
+		Position = UDim2.fromOffset(0, 126),
+		Size = UDim2.new(1, 0, 1, -158),
+		BackgroundTransparency = 1,
+		ScrollBarThickness = 6,
+		ScrollBarImageColor3 = Theme.Muted,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ZIndex = 33,
+		Parent = body,
+	}, {
+		create("UIGridLayout", {
+			CellSize = UDim2.fromOffset(172, 186),
+			CellPadding = UDim2.fromOffset(14, 14),
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+		Widgets.padding(6, 6, 6, 6),
+	})
+	local collection = Widgets.text({
+		Name = "Collection",
+		Text = "",
+		TextSize = 18,
+		Color = Theme.Muted,
+		Stroke = 2,
+		XAlign = Enum.TextXAlignment.Right,
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -4, 1, -4),
+		Size = UDim2.fromOffset(260, 24),
+		ZIndex = 33,
+		Parent = body,
+	})
+
+	for order, item in Config.Index do
+		cards[item.Id] = makeCard(grid, item, order)
+	end
+
+	local function refresh()
+		local total, found = 0, 0
+		for _, item in Config.Index do
+			refreshCard(item)
+			cards[item.Id].Frame.Visible = item.Rarity == selected
+			total += 1
+			if owned(item.Id) > 0 then
+				found += 1
+			end
+		end
+		collection.Text = Text.IndexCollection:format(found, total)
+		for _, rarity in Config.Rarities do
+			local tab = tabs[rarity.Key]
+			tab.Badge.Set(if claimable(rarity.Key) then "!" else nil)
+			tab.Instance.Size = if rarity.Key == selected then UDim2.fromOffset(150, 46) else UDim2.fromOffset(136, 42)
+		end
+		local rarity = Rules.RarityByKey[selected]
+		local seriesFound, seriesTotal = foundCount(selected)
+		seriesLabel.Text = Widgets.upper(rarity.Label)
+		seriesLabel.TextColor3 = rarity.Color
+		bar.Set(if seriesTotal > 0 then seriesFound / seriesTotal else 0, ("%d / %d"):format(seriesFound, seriesTotal))
+		if State.get("Claim_" .. selected) == true then
+			claimButton.SetText(Text.IndexClaimed)
+			claimButton.SetEnabled(false)
+		elseif seriesFound == seriesTotal and seriesTotal > 0 then
+			claimButton.SetText(Text.IndexClaim:format("+" .. Format.short(rarity.IndexReward)))
+			claimButton.SetEnabled(true)
+		else
+			claimButton.SetText(Text.IndexIncomplete)
+			claimButton.SetEnabled(false)
+		end
+	end
+
+	for order, rarity in Config.Rarities do
+		local tab
+		tab = Widgets.button({
+			Name = rarity.Key,
+			Parent = tabRow,
+			LayoutOrder = order,
+			Size = UDim2.fromOffset(136, 42),
+			Color = rarity.Color,
+			Text = rarity.Label,
+			TextSize = 20,
+			Depth = 4,
+			ZIndex = 34,
+			OnClick = function()
+				selected = rarity.Key
+				grid.CanvasPosition = Vector2.zero
+				refresh()
+			end,
+		})
+		tab.Badge = Widgets.badge(tab.Instance)
+		tabs[rarity.Key] = tab
+	end
+	window.DefaultSelection = tabs[selected].Instance
+
+	-- opening the Index "sees" the new entries of the tab once it closes
+	table.insert(window.OnClose, function()
+		table.clear(unseen)
+		refresh()
+		notifyChanged()
+	end)
+	table.insert(window.OnOpen, refresh)
+
+	State.onAnyChange(function(key)
+		if string.sub(key, 1, 4) == "Idx_" or string.sub(key, 1, 6) == "Claim_" then
+			refresh()
+			notifyChanged()
+		end
+	end)
+	IndexWindow.onChanged(function()
+		if Windows.isOpen("Index") then
+			refresh()
+		end
+	end)
+	refresh()
+end
+
+return IndexWindow
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0014">
+				<Properties>
+					<string name="Name">Notify</string>
+					<ProtectedString name="Source"><![CDATA[-- Notify: toast messages stacked at the top of the screen.
+--   Notify.show("Hello", "success")   -- kind: info | success | error | reward
+
+local Widgets = require(script.Parent:WaitForChild("Widgets"))
+
+local Theme = Widgets.Theme
+local create = Widgets.create
+
+local Notify = {}
+
+local KIND_COLORS = {
+	info = Theme.Blue,
+	success = Theme.Green,
+	error = Theme.Red,
+	reward = Theme.Gold,
+}
+local MAX_TOASTS = 4
+
+local container: Frame? = nil
+local active: { Frame } = {}
+local order = 0
+
+local function dismiss(toast: Frame)
+	local index = table.find(active, toast)
+	if not index then
+		return
+	end
+	table.remove(active, index)
+	local scale = toast:FindFirstChildOfClass("UIScale")
+	if scale then
+		Widgets.tween(scale, 0.18, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In).Completed:Once(function()
+			toast:Destroy()
+		end)
+	else
+		toast:Destroy()
+	end
+end
+
+function Notify.init(screenGui: ScreenGui)
+	container = Widgets.frame({
+		Name = "Toasts",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 6),
+		Size = UDim2.fromOffset(460, 230),
+		ZIndex = 80,
+		Parent = screenGui,
+	}, { Widgets.list(Enum.FillDirection.Vertical, 6) })
+	Widgets.attachHudScale(container :: Frame)
+end
+
+function Notify.show(text: string, kind: string?, duration: number?)
+	local parent = container
+	if not parent then
+		return
+	end
+	order += 1
+	local color = KIND_COLORS[kind or "info"] or Theme.Blue
+	local toast = create("Frame", {
+		Name = "Toast",
+		Size = UDim2.fromOffset(440, 46),
+		BackgroundColor3 = Theme.Panel,
+		BackgroundTransparency = 0.04,
+		LayoutOrder = order,
+		ZIndex = 80,
+		Parent = parent,
+	}, { Widgets.corner(14), Widgets.stroke(3) })
+	create("Frame", {
+		Name = "Accent",
+		Size = UDim2.new(0, 12, 1, 0),
+		BackgroundColor3 = color,
+		ZIndex = 81,
+		Parent = toast,
+	}, { Widgets.corner(14) })
+	Widgets.text({
+		Text = text,
+		TextSize = 20,
+		Scaled = true,
+		XAlign = Enum.TextXAlignment.Left,
+		Position = UDim2.fromOffset(24, 4),
+		Size = UDim2.new(1, -34, 1, -8),
+		ZIndex = 82,
+		Parent = toast,
+	})
+	local scale = create("UIScale", { Scale = 0.5, Parent = toast })
+	Widgets.tween(scale, 0.25, { Scale = 1 }, Enum.EasingStyle.Back)
+
+	table.insert(active, toast)
+	while #active > MAX_TOASTS do
+		dismiss(active[1])
+	end
+	task.delay(duration or 3, dismiss, toast)
+end
+
+return Notify
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0015">
+				<Properties>
+					<string name="Name">PickupFx</string>
+					<ProtectedString name="Source"><![CDATA[-- PickupFx: makes the collectible coins and orbs float and spin, on this
+-- screen only (the server never moves them). Pickups far from the camera are skipped.
+
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
+
+local PickupFx = {}
+
+local MAX_DISTANCE = 160
+
+function PickupFx.start(tag: string)
+	local entries: { [BasePart]: { base: CFrame, phase: number } } = {}
+
+	local function add(instance: Instance)
+		if instance:IsA("BasePart") then
+			entries[instance] = { base = instance.CFrame, phase = math.random() * math.pi * 2 }
+		end
+	end
+	for _, instance in CollectionService:GetTagged(tag) do
+		add(instance)
+	end
+	CollectionService:GetInstanceAddedSignal(tag):Connect(add)
+	CollectionService:GetInstanceRemovedSignal(tag):Connect(function(instance)
+		entries[instance :: BasePart] = nil
+	end)
+
+	local parts: { BasePart } = {}
+	local frames: { CFrame } = {}
+	RunService.RenderStepped:Connect(function()
+		local camera = workspace.CurrentCamera
+		if not camera or next(entries) == nil then
+			return
+		end
+		table.clear(parts)
+		table.clear(frames)
+		local cameraPosition = camera.CFrame.Position
+		local now = os.clock()
+		for part, entry in entries do
+			if (entry.base.Position - cameraPosition).Magnitude < MAX_DISTANCE then
+				table.insert(parts, part)
+				table.insert(frames, entry.base * CFrame.new(0, math.sin(now * 2 + entry.phase) * 0.4, 0) * CFrame.Angles(0, now * 1.6 + entry.phase, 0))
+			end
+		end
+		if #parts > 0 then
+			workspace:BulkMoveTo(parts, frames, Enum.BulkMoveMode.FireCFrameChanged)
+		end
+	end)
+end
+
+return PickupFx
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0016">
+				<Properties>
+					<string name="Name">Purchases</string>
+					<ProtectedString name="Source"><![CDATA[-- Purchases: opens the Roblox purchase prompts and shows live prices.
+-- Nothing is granted here: the server grants in ProcessReceipt.
+
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local Notify = require(script.Parent:WaitForChild("Notify"))
+local Effects = require(script.Parent:WaitForChild("Effects"))
+local State = require(script.Parent:WaitForChild("State"))
+
+local Text = Config.Text
+local player = Players.LocalPlayer
+
+local Purchases = {}
+
+local PROMPT_TIMEOUT = 30
+
+local pending = false
+local promptToken = 0
+local prices: { [string]: number } = {}
+
+local function finish()
+	pending = false
+	Effects.purchaseOverlay(false)
+end
+
+local function entryFor(kind: string, key: string): { [string]: any }?
+	return if kind == "Pass" then Rules.PassByKey[key] else Rules.ProductByKey[key]
+end
+
+-- kind = "Product" (developer product) or "Pass" (game pass), key = its Key in UIConfig.
+function Purchases.prompt(kind: string, key: string)
+	local entry = entryFor(kind, key)
+	if not entry then
+		return
+	end
+	if not entry.Id or entry.Id <= 0 then
+		Notify.show(Text.ProductMissing:format(entry.Name or key), "error", 4)
+		return
+	end
+	if kind == "Pass" and State.get("Pass_" .. key) == true then
+		Notify.show(Text.AlreadyOwned, "info")
+		return
+	end
+	if pending then
+		return
+	end
+	pending = true
+	promptToken += 1
+	local token = promptToken
+	Effects.purchaseOverlay(true)
+	local ok = pcall(function()
+		if kind == "Pass" then
+			MarketplaceService:PromptGamePassPurchase(player, entry.Id)
+		else
+			MarketplaceService:PromptProductPurchase(player, entry.Id)
+		end
+	end)
+	if not ok then
+		finish()
+		Notify.show(Text.PurchaseError, "error")
+		return
+	end
+	-- never leave the overlay stuck if Roblox does not answer
+	task.delay(PROMPT_TIMEOUT, function()
+		if pending and promptToken == token then
+			finish()
+		end
+	end)
+end
+
+local function priceText(entry: { [string]: any }, cacheKey: string): string
+	local price = prices[cacheKey] or entry.PriceHint
+	return if price then "R$ " .. price else "R$ ?"
+end
+
+-- Calls update(text) with the price hint now, then with the real price once known.
+function Purchases.observePrice(kind: string, key: string, update: (string) -> ())
+	local entry = entryFor(kind, key)
+	if not entry then
+		return
+	end
+	local cacheKey = kind .. ":" .. key
+	update(priceText(entry, cacheKey))
+	if not entry.Id or entry.Id <= 0 or prices[cacheKey] then
+		return
+	end
+	task.spawn(function()
+		local infoType = if kind == "Pass" then Enum.InfoType.GamePass else Enum.InfoType.Product
+		local ok, info = pcall(function()
+			return MarketplaceService:GetProductInfoAsync(entry.Id, infoType)
+		end)
+		if not ok then
+			-- older engines only know the previous name
+			ok, info = pcall(function()
+				return (MarketplaceService :: any):GetProductInfo(entry.Id, infoType)
+			end)
+		end
+		if ok and type(info) == "table" and type(info.PriceInRobux) == "number" then
+			prices[cacheKey] = info.PriceInRobux
+			update(priceText(entry, cacheKey))
+		end
+	end)
+end
+
+function Purchases.init()
+	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, _, purchased)
+		if userId ~= player.UserId then
+			return
+		end
+		finish()
+		if not purchased then
+			Notify.show(Text.PurchaseCancelled, "info", 2)
+		end
+	end)
+	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(who, _, purchased)
+		if who ~= player then
+			return
+		end
+		finish()
+		if not purchased then
+			Notify.show(Text.PurchaseCancelled, "info", 2)
+		end
+	end)
+end
+
+return Purchases
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0017">
+				<Properties>
+					<string name="Name">RebirthWindow</string>
+					<ProtectedString name="Source"><![CDATA[-- RebirthWindow: progress towards the next rebirth, what it gives, and the
+-- buttons to rebirth (server checked) or skip it with Robux.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local Format = require(shared:WaitForChild("Format"))
+local Widgets = require(script.Parent:WaitForChild("Widgets"))
+local State = require(script.Parent:WaitForChild("State"))
+local Windows = require(script.Parent:WaitForChild("Windows"))
+local Notify = require(script.Parent:WaitForChild("Notify"))
+local Effects = require(script.Parent:WaitForChild("Effects"))
+local Purchases = require(script.Parent:WaitForChild("Purchases"))
+
+local Theme = Widgets.Theme
+local Text = Config.Text
+
+local RebirthWindow = {}
+
+-- Replaced by build(); refreshes the texts, the bar and the button state.
+function RebirthWindow.refresh() end
+
+local WIDTH, HEIGHT = 620, 440
+
+local function statCard(parent: Instance, caption: string, x: number, valueColor: Color3): TextLabel
+	local card = Widgets.panel({
+		Name = caption,
+		Position = UDim2.fromOffset(x, 40),
+		Size = UDim2.fromOffset(210, 124),
+		ZIndex = 33,
+		Parent = parent,
+	})
+	Widgets.text({ Name = "Caption", Text = caption, Font = "Title", TextSize = 22, Color = Theme.Muted, Stroke = 2.5, Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 26), ZIndex = 34, Parent = card })
+	local value = Widgets.text({ Name = "Value", Text = "x1", Font = "Title", TextSize = 48, Color = valueColor, Stroke = 4, Position = UDim2.fromOffset(0, 34), Size = UDim2.new(1, 0, 0, 54), ZIndex = 34, Parent = card })
+	Widgets.text({ Name = "Hint", Text = Text.PowerMultiplier, TextSize = 16, Scaled = true, Color = Theme.Muted, Stroke = 2, Position = UDim2.fromOffset(6, 90), Size = UDim2.new(1, -12, 0, 22), ZIndex = 34, Parent = card })
+	return value
+end
+
+-- request(action, argument) -> result table from the server
+function RebirthWindow.build(request: (string, any?) -> { [string]: any })
+	local window = Windows.create("Rebirth", { Title = Text.RebirthTitle, Width = WIDTH, Height = HEIGHT, Colors = Theme.Windows.Rebirth })
+	local body = window.Body
+	local innerWidth = WIDTH - 40
+
+	local subtitle = Widgets.text({ Name = "Subtitle", Text = "", TextSize = 22, Color = Theme.Muted, Stroke = 2, Position = UDim2.fromOffset(0, 6), Size = UDim2.new(1, 0, 0, 28), ZIndex = 33, Parent = body })
+	local before = statCard(body, Text.Before, 40, Theme.Text)
+	local after = statCard(body, Text.After, innerWidth - 250, Color3.fromRGB(140, 255, 120))
+	Widgets.text({ Name = "Arrow", Text = "➡️", TextSize = 50, Stroke = false, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 72), Size = UDim2.fromOffset(80, 60), ZIndex = 33, Parent = body })
+	local reward = Widgets.text({ Name = "Reward", Text = "", TextSize = 24, Color = Color3.fromRGB(140, 235, 255), Stroke = 2.5, Position = UDim2.fromOffset(0, 176), Size = UDim2.new(1, 0, 0, 30), ZIndex = 33, Parent = body })
+	local bar = Widgets.progressBar({
+		Name = "Progress",
+		Parent = body,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 214),
+		Size = UDim2.new(1, -60, 0, 42),
+		Colors = { Color3.fromRGB(205, 110, 255), Color3.fromRGB(255, 90, 180) },
+		TextSize = 22,
+	})
+	bar.Instance.ZIndex = 33
+	Widgets.text({ Name = "Warning", Text = Text.RebirthWarning, TextSize = 18, Color = Color3.fromRGB(255, 190, 120), Stroke = 2, Position = UDim2.fromOffset(0, 264), Size = UDim2.new(1, 0, 0, 24), ZIndex = 33, Parent = body })
+
+	local rebirthButton, skipButton
+	rebirthButton = Widgets.button({
+		Name = "Rebirth",
+		Parent = body,
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(0.5, -10, 1, -8),
+		Size = UDim2.fromOffset(230, 66),
+		Color = Theme.Green,
+		Text = Text.RebirthAction,
+		TextSize = 30,
+		ZIndex = 34,
+		OnClick = function()
+			rebirthButton.SetEnabled(false)
+			local result = request("Rebirth")
+			if result.ok then
+				Windows.close()
+				Effects.rewardPopup("🔁", Text.RebirthDone, Text.RebirthDoneSub:format(Format.multiplier(Rules.rebirthMultiplier(result.rebirths or 0))), Theme.Purple)
+			else
+				Notify.show(result.message or Text.GenericError, "error")
+			end
+			RebirthWindow.refresh()
+		end,
+	})
+	skipButton = Widgets.button({
+		Name = "Skip",
+		Parent = body,
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0.5, 10, 1, -8),
+		Size = UDim2.fromOffset(230, 66),
+		Color = Theme.Gold,
+		Text = Text.RebirthSkip,
+		TextSize = 26,
+		SubText = "R$ ?",
+		SubTextSize = 18,
+		ZIndex = 34,
+		OnClick = function()
+			Purchases.prompt("Product", Config.Rebirth.SkipProduct)
+		end,
+	})
+	Purchases.observePrice("Product", Config.Rebirth.SkipProduct, skipButton.SetSubText)
+	window.DefaultSelection = rebirthButton.Instance
+
+	function RebirthWindow.refresh()
+		local rebirths = State.number("Rebirths")
+		local power = State.number("Power")
+		local required = Rules.rebirthRequirement(rebirths)
+		subtitle.Text = Text.RebirthNumber:format(rebirths + 1)
+		before.Text = "x" .. Format.multiplier(Rules.rebirthMultiplier(rebirths))
+		after.Text = "x" .. Format.multiplier(Rules.rebirthMultiplier(rebirths + 1))
+		reward.Text = Text.RebirthReward:format(Format.short(Rules.rebirthGems(rebirths + 1)))
+		bar.Set(power / required, ("%s / %s 💪"):format(Format.short(power), Format.short(required)))
+		rebirthButton.SetEnabled(power >= required)
+	end
+
+	State.observe("Power", RebirthWindow.refresh)
+	State.observe("Rebirths", RebirthWindow.refresh)
+end
+
+-- True when the player has enough power to rebirth (drives the HUD badge).
+function RebirthWindow.isReady(): boolean
+	return State.number("Power") >= Rules.rebirthRequirement(State.number("Rebirths"))
+end
+
+return RebirthWindow
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0018">
+				<Properties>
+					<string name="Name">ShopWindow</string>
+					<ProtectedString name="Source"><![CDATA[-- ShopWindow: game passes, boosts and coin packs, all bought with Robux.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local Widgets = require(script.Parent:WaitForChild("Widgets"))
+local State = require(script.Parent:WaitForChild("State"))
+local Windows = require(script.Parent:WaitForChild("Windows"))
+local Purchases = require(script.Parent:WaitForChild("Purchases"))
+
+local Theme = Widgets.Theme
+local Text = Config.Text
+local create = Widgets.create
+
+local ShopWindow = {}
+
+local WIDTH, HEIGHT = 740, 480
+
+local function sectionTitle(parent: Instance, text: string, order: number)
+	Widgets.text({
+		Name = "Section",
+		Text = text,
+		Font = "Title",
+		TextSize = 26,
+		Stroke = 3,
+		XAlign = Enum.TextXAlignment.Left,
+		Size = UDim2.new(1, -8, 0, 30),
+		LayoutOrder = order,
+		ZIndex = 33,
+		Parent = parent,
+	})
+end
+
+local function rewardChip(parent: Instance, text: string, order: number)
+	local chip = create("Frame", {
+		Name = "Chip",
+		Size = UDim2.fromOffset(92, 28),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.55,
+		LayoutOrder = order,
+		ZIndex = 34,
+		Parent = parent,
+	}, { Widgets.round() })
+	Widgets.text({ Text = text, TextSize = 18, Stroke = 2, ZIndex = 35, Parent = chip })
+end
+
+local function passCard(parent: Instance, pass: { [string]: any }, order: number)
+	local card = create("Frame", {
+		Name = pass.Key,
+		Size = UDim2.new(1, -14, 0, 128),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		LayoutOrder = order,
+		ZIndex = 33,
+		Parent = parent,
+	}, { Widgets.corner(16), Widgets.stroke(3), Widgets.gradient(pass.Colors, 0) })
+	create("Frame", {
+		Name = "Shine",
+		Position = UDim2.fromOffset(6, 5),
+		Size = UDim2.new(1, -12, 0.36, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.8,
+		ZIndex = 33,
+		Parent = card,
+	}, { Widgets.corner(12) })
+	local iconCircle = Widgets.circle({
+		Name = "Icon",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 14, 0.5, 0),
+		Size = UDim2.fromOffset(96, 96),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.65,
+		ZIndex = 34,
+		Parent = card,
+	}, { Widgets.stroke(3) })
+	Widgets.text({ Text = pass.Icon, TextSize = 58, Stroke = false, ZIndex = 35, Parent = iconCircle })
+	Widgets.text({
+		Name = "Name",
+		Text = pass.Name,
+		Font = "Title",
+		TextSize = 30,
+		Stroke = 3,
+		XAlign = Enum.TextXAlignment.Left,
+		Position = UDim2.fromOffset(124, 12),
+		Size = UDim2.new(1, -310, 0, 34),
+		ZIndex = 35,
+		Parent = card,
+	})
+	Widgets.text({
+		Name = "Description",
+		Text = pass.Description,
+		TextSize = 18,
+		Stroke = 2,
+		Wrapped = true,
+		XAlign = Enum.TextXAlignment.Left,
+		YAlign = Enum.TextYAlignment.Top,
+		Position = UDim2.fromOffset(124, 48),
+		Size = UDim2.new(1, -310, 0, 40),
+		ZIndex = 35,
+		Parent = card,
+	})
+	if pass.Rewards then
+		local chips = Widgets.frame({
+			Name = "Rewards",
+			Position = UDim2.fromOffset(124, 88),
+			Size = UDim2.new(1, -310, 0, 28),
+			ZIndex = 34,
+			Parent = card,
+		}, { Widgets.list(Enum.FillDirection.Horizontal, 6, Enum.HorizontalAlignment.Left) })
+		local chipOrder = 0
+		for _, key in { "Coins", "Gems", "Power", "Spins" } do
+			if pass.Rewards[key] then
+				chipOrder += 1
+				local info = Rules.describe({ [key] = pass.Rewards[key] })
+				local amount = string.gsub(info.Short, "^%+", "")
+				rewardChip(chips, info.Icon .. " " .. amount, chipOrder)
+			end
+		end
+	end
+	local buy = Widgets.button({
+		Name = "Buy",
+		Parent = card,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -16, 0.5, 0),
+		Size = UDim2.fromOffset(160, 60),
+		Color = Theme.Green,
+		Text = "R$ ?",
+		TextSize = 28,
+		ZIndex = 36,
+		OnClick = function()
+			Purchases.prompt("Pass", pass.Key)
+		end,
+	})
+	Purchases.observePrice("Pass", pass.Key, function(price)
+		if State.get("Pass_" .. pass.Key) ~= true then
+			buy.SetText(price)
+		end
+	end)
+	State.observe("Pass_" .. pass.Key, function(owned)
+		if owned == true then
+			buy.SetText(Text.Owned)
+			buy.SetEnabled(false)
+		end
+	end)
+	return buy
+end
+
+local function productCard(parent: Instance, product: { [string]: any }, order: number)
+	local card = Widgets.panel({
+		Name = product.Key,
+		LayoutOrder = order,
+		ZIndex = 33,
+		Parent = parent,
+	})
+	Widgets.text({ Name = "Icon", Text = product.Icon, TextSize = 54, Stroke = false, Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 64), ZIndex = 34, Parent = card })
+	Widgets.text({ Name = "Name", Text = product.Name, Font = "Title", TextSize = 24, Stroke = 3, Position = UDim2.fromOffset(6, 74), Size = UDim2.new(1, -12, 0, 28), ZIndex = 34, Parent = card })
+	Widgets.text({
+		Name = "Description",
+		Text = product.Description or "",
+		TextSize = 17,
+		Stroke = 2,
+		Color = Theme.Muted,
+		Position = UDim2.fromOffset(6, 102),
+		Size = UDim2.new(1, -12, 0, 22),
+		ZIndex = 34,
+		Parent = card,
+	})
+	local buy = Widgets.button({
+		Name = "Buy",
+		Parent = card,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -12),
+		Size = UDim2.new(1, -28, 0, 50),
+		Color = Theme.Green,
+		Text = "R$ ?",
+		TextSize = 24,
+		ZIndex = 35,
+		OnClick = function()
+			Purchases.prompt("Product", product.Key)
+		end,
+	})
+	Purchases.observePrice("Product", product.Key, buy.SetText)
+	return buy
+end
+
+local function productRow(parent: Instance, section: string, order: number): GuiObject?
+	local row = Widgets.frame({
+		Name = section,
+		Size = UDim2.new(1, -14, 0, 196),
+		LayoutOrder = order,
+		ZIndex = 33,
+		Parent = parent,
+	}, {
+		create("UIGridLayout", {
+			CellSize = UDim2.new(1 / 3, -8, 0, 190),
+			CellPadding = UDim2.fromOffset(12, 0),
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	local first = nil
+	local count = 0
+	for _, product in Config.Products do
+		if product.Section == section then
+			count += 1
+			local buy = productCard(row, product, count)
+			first = first or buy.Instance
+		end
+	end
+	return first
+end
+
+function ShopWindow.build()
+	local window = Windows.create("Shop", { Title = Text.ShopTitle, Width = WIDTH, Height = HEIGHT, Colors = Theme.Windows.Shop })
+	local list = create("ScrollingFrame", {
+		Name = "List",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		ScrollBarThickness = 6,
+		ScrollBarImageColor3 = Theme.Muted,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ZIndex = 32,
+		Parent = window.Body,
+	}, {
+		Widgets.list(Enum.FillDirection.Vertical, 10),
+		Widgets.padding(12, 4, 12, 4),
+	})
+
+	local order = 0
+	local function nextOrder(): number
+		order += 1
+		return order
+	end
+
+	sectionTitle(list, Text.SectionPasses, nextOrder())
+	local firstButton = nil
+	for _, pass in Config.GamePasses do
+		local buy = passCard(list, pass, nextOrder())
+		firstButton = firstButton or buy.Instance
+	end
+	sectionTitle(list, Text.SectionBoosts, nextOrder())
+	productRow(list, "Boosts", nextOrder())
+	sectionTitle(list, Text.SectionCoins, nextOrder())
+	productRow(list, "Coins", nextOrder())
+
+	window.DefaultSelection = firstButton
+	window.OnOpen[#window.OnOpen + 1] = function()
+		list.CanvasPosition = Vector2.zero
+	end
+end
+
+return ShopWindow
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0019">
+				<Properties>
+					<string name="Name">State</string>
+					<ProtectedString name="Source"><![CDATA[-- State: read-only mirror of the player's data. The server writes player
+-- attributes (Coins, Power, Idx_<id>...), the interface observes them here.
+
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+
+local State = {}
+
+local listeners: { [string]: { (any) -> () } } = {}
+local anyListeners: { (string, any) -> () } = {}
+
+function State.get(key: string): any
+	return player:GetAttribute(key)
+end
+
+function State.number(key: string): number
+	return tonumber(player:GetAttribute(key)) or 0
+end
+
+-- Calls fn(value) now and every time the attribute changes.
+function State.observe(key: string, fn: (any) -> ())
+	local list = listeners[key]
+	if not list then
+		list = {}
+		listeners[key] = list
+	end
+	table.insert(list, fn)
+	fn(player:GetAttribute(key))
+end
+
+-- Calls fn(key, value) for every attribute change.
+function State.onAnyChange(fn: (string, any) -> ())
+	table.insert(anyListeners, fn)
+end
+
+-- Server clock (os.time on the server), synced on the client.
+function State.serverNow(): number
+	return workspace:GetServerTimeNow()
+end
+
+player.AttributeChanged:Connect(function(key)
+	local value = player:GetAttribute(key)
+	local list = listeners[key]
+	if list then
+		for _, fn in list do
+			fn(value)
+		end
+	end
+	for _, fn in anyListeners do
+		fn(key, value)
+	end
+end)
+
+return State
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0020">
+				<Properties>
+					<string name="Name">Wheel</string>
+					<ProtectedString name="Source"><![CDATA[-- Wheel: a spinning prize wheel drawn without any image.
+--
+-- Coloured sectors are painted with half-disks: a round frame whose UIGradient
+-- makes one half transparent covers exactly 180 degrees, whatever its rotation.
+-- The wheel is split into two fixed clipping halves (right and left). In each
+-- half, the disk of the sector under the half's start is painted first, then
+-- one disk per sector boundary inside the half, in clockwise order: each disk
+-- covers from its boundary to the end of the half, so the last one painted at
+-- an angle is always the sector that owns it. The clip frames are never
+-- rotated (clipping ignores rotated frames); only their children are.
+--
+-- Angles are in degrees, clockwise from the top, like GuiObject.Rotation.
+
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Rules = require(shared:WaitForChild("Rules"))
+local Widgets = require(script.Parent:WaitForChild("Widgets"))
+
+local Theme = Widgets.Theme
+local create = Widgets.create
+
+local Wheel = {}
+Wheel.__index = Wheel
+
+local LIGHT_COUNT = 16
+local LIGHT_ON = Color3.fromRGB(255, 244, 170)
+local LIGHT_OFF = Color3.fromRGB(150, 90, 20)
+
+-- Transparent on the left half, opaque on the right half.
+local HALF_MASK = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 1),
+	NumberSequenceKeypoint.new(0.499, 1),
+	NumberSequenceKeypoint.new(0.501, 0),
+	NumberSequenceKeypoint.new(1, 0),
+})
+
+type Half = { start: number, disks: { Frame } }
+
+export type WheelObject = {
+	Root: Frame,
+	Spinning: boolean,
+	SetAngle: (WheelObject, number) -> (),
+	SpinTo: (WheelObject, number, number, (() -> ())?, (() -> ())?) -> (),
+	SetLightsActive: (WheelObject, boolean) -> (),
+}
+
+-- Full-size transparent frame centred on the wheel: rotating it swings its
+-- children around the wheel centre.
+local function pivot(parent: Instance, name: string, zIndex: number): Frame
+	return Widgets.frame({
+		Name = name,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = zIndex,
+		Parent = parent,
+	})
+end
+
+-- options: Parent, Position, Diameter, Rewards (each with a Color)
+function Wheel.new(options: { [string]: any })
+	local self = setmetatable({}, Wheel)
+	local rewards = options.Rewards
+	self.count = #rewards
+	self.width = 360 / self.count
+	self.angle = 0
+	self.Spinning = false
+	self.colors = {}
+	for index, reward in rewards do
+		self.colors[index] = reward.Color or Theme.Blue
+	end
+
+	local diameter = options.Diameter
+	local root = Widgets.frame({
+		Name = "Wheel",
+		Size = UDim2.fromOffset(diameter, diameter),
+		Position = options.Position or UDim2.new(),
+		AnchorPoint = options.AnchorPoint or Vector2.zero,
+		ZIndex = 31,
+		Parent = options.Parent,
+	})
+	self.Root = root
+
+	-- golden rim behind the sectors
+	Widgets.circle({
+		Name = "Rim",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.new(1, 30, 1, 30),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		ZIndex = 31,
+		Parent = root,
+	}, { Widgets.stroke(4), Widgets.gradient({ Color3.fromRGB(255, 225, 110), Color3.fromRGB(215, 120, 20) }, 90) })
+
+	-- sector halves
+	local disksPerHalf = math.ceil(180 / self.width) + 2
+	self.halves = {} :: { Half }
+	for _, side in { "Right", "Left" } do
+		local isRight = side == "Right"
+		local clip = Widgets.frame({
+			Name = side .. "Half",
+			Position = UDim2.fromScale(if isRight then 0.5 else 0, 0),
+			Size = UDim2.fromScale(0.5, 1),
+			ClipsDescendants = true,
+			ZIndex = 32,
+			Parent = root,
+		})
+		local disks = {}
+		for index = 1, disksPerHalf do
+			disks[index] = create("Frame", {
+				Name = "Disk" .. index,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(if isRight then 0 else 1, 0.5),
+				Size = UDim2.fromScale(2, 1),
+				BackgroundColor3 = Color3.new(1, 1, 1),
+				Visible = false,
+				ZIndex = 32 + index,
+				Parent = clip,
+			}, { Widgets.round(), create("UIGradient", { Transparency = HALF_MASK }) })
+		end
+		table.insert(self.halves, { start = if isRight then 0 else 180, disks = disks })
+	end
+
+	-- soft inner shading on top of the colours
+	Widgets.circle({
+		Name = "Gloss",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0,
+		ZIndex = 45,
+		Parent = root,
+	}, {
+		create("UIGradient", {
+			Rotation = 90,
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.78),
+				NumberSequenceKeypoint.new(0.45, 1),
+				NumberSequenceKeypoint.new(1, 0.86),
+			}),
+			Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(0, 0, 0)),
+		}),
+	})
+
+	-- separators between sectors
+	self.spokes = {}
+	for index = 1, self.count do
+		local holder = pivot(root, "Spoke" .. index, 46)
+		create("Frame", {
+			Name = "Line",
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.fromScale(0.5, 0),
+			Size = UDim2.new(0, 5, 0.5, 0),
+			BackgroundColor3 = Theme.Outline,
+			ZIndex = 46,
+			Parent = holder,
+		})
+		self.spokes[index] = holder
+	end
+
+	-- reward labels, reading outwards along each sector
+	self.labels = {}
+	for index, reward in rewards do
+		local info = Rules.describe(reward)
+		local holder = pivot(root, "Label" .. index, 47)
+		Widgets.text({
+			Name = "Icon",
+			Text = info.Icon,
+			TextSize = 38,
+			Stroke = false,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.15),
+			Size = UDim2.fromOffset(60, 52),
+			ZIndex = 47,
+			Parent = holder,
+		})
+		Widgets.text({
+			Name = "Amount",
+			Text = info.Short,
+			Font = "Title",
+			TextSize = 26,
+			Stroke = 3,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.29),
+			Size = UDim2.fromOffset(110, 32),
+			ZIndex = 47,
+			Parent = holder,
+		})
+		self.labels[index] = holder
+	end
+
+	-- hub
+	local hub = Widgets.circle({
+		Name = "Hub",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.2, 0.2),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		ZIndex = 50,
+		Parent = root,
+	}, { Widgets.stroke(4), Widgets.gradient({ Color3.fromRGB(255, 235, 130), Color3.fromRGB(230, 140, 20) }, 90) })
+	Widgets.text({ Text = "⭐", TextSize = 38, Stroke = false, ZIndex = 51, Parent = hub })
+
+	-- light bulbs on the (static) rim
+	self.lights = {}
+	for index = 1, LIGHT_COUNT do
+		local holder = pivot(root, "Light" .. index, 52)
+		holder.Rotation = (index - 1) * 360 / LIGHT_COUNT
+		self.lights[index] = Widgets.circle({
+			Name = "Bulb",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0, -8),
+			Size = UDim2.fromOffset(13, 13),
+			BackgroundColor3 = LIGHT_ON,
+			ZIndex = 52,
+			Parent = holder,
+		}, { Widgets.stroke(2) })
+	end
+
+	-- pointer at the top (static)
+	local pointer = Widgets.frame({
+		Name = "Pointer",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0, -12),
+		Size = UDim2.fromOffset(46, 46),
+		ZIndex = 55,
+		Parent = root,
+	})
+	create("Frame", {
+		Name = "Tip",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(23, 33),
+		Size = UDim2.fromOffset(26, 26),
+		Rotation = 45,
+		BackgroundColor3 = Theme.Red,
+		ZIndex = 55,
+		Parent = pointer,
+	}, { Widgets.corner(4), Widgets.stroke(3) })
+	Widgets.circle({
+		Name = "Cap",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(23, 19),
+		Size = UDim2.fromOffset(38, 38),
+		BackgroundColor3 = Theme.Red,
+		ZIndex = 56,
+		Parent = pointer,
+	}, { Widgets.stroke(3), Widgets.shading() })
+	Widgets.circle({
+		Name = "Shine",
+		Position = UDim2.fromOffset(9, 6),
+		Size = UDim2.fromOffset(11, 11),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.3,
+		ZIndex = 57,
+		Parent = pointer,
+	})
+	self.pointer = pointer
+
+	self.lightsActive = false
+	self.lightClock = 0
+	self.lightPhase = 0
+	self:SetAngle(0)
+	return self
+end
+
+function Wheel:paintDisk(disk: Frame, screenAngle: number, sector: number)
+	disk.Rotation = screenAngle
+	disk.BackgroundColor3 = self.colors[sector]
+	disk.Visible = true
+end
+
+function Wheel:paintHalf(half: Half)
+	local width = self.width
+	-- wheel-space angle found at the start of this half
+	local startInWheel = (half.start - self.angle) % 360
+	local sector = math.floor(startInWheel / width) % self.count + 1
+	local used = 1
+	self:paintDisk(half.disks[1], half.start, sector)
+	-- distance from the half start to the next sector boundary
+	local distance = sector * width - startInWheel
+	while distance < 180 - 1e-6 and used < #half.disks do
+		sector = sector % self.count + 1
+		used += 1
+		self:paintDisk(half.disks[used], half.start + distance, sector)
+		distance += width
+	end
+	for index = used + 1, #half.disks do
+		half.disks[index].Visible = false
+	end
+end
+
+function Wheel:SetAngle(angle: number)
+	self.angle = angle % 360
+	for _, half in self.halves do
+		self:paintHalf(half)
+	end
+	local width = self.width
+	for index, holder in self.labels do
+		holder.Rotation = (index - 1) * width + width / 2 + self.angle
+	end
+	for index, holder in self.spokes do
+		holder.Rotation = (index - 1) * width + self.angle
+	end
+end
+
+-- Sector (1..count) under the pointer.
+function Wheel:SectorAtPointer(): number
+	return math.floor(((-self.angle) % 360) / self.width) % self.count + 1
+end
+
+function Wheel:stepLights(dt: number)
+	self.lightClock += dt
+	local period = if self.Spinning then 0.08 else 0.35
+	if self.lightClock < period then
+		return
+	end
+	self.lightClock = 0
+	self.lightPhase += 1
+	for index, bulb in self.lights do
+		local on = if self.Spinning then index % 4 == self.lightPhase % 4 else (index + self.lightPhase) % 2 == 0
+		bulb.BackgroundColor3 = if on then LIGHT_ON else LIGHT_OFF
+	end
+end
+
+-- Blinking bulbs, only while the wheel is on screen.
+function Wheel:SetLightsActive(active: boolean)
+	if active == self.lightsActive then
+		return
+	end
+	self.lightsActive = active
+	if active then
+		self.lightConnection = RunService.RenderStepped:Connect(function(dt)
+			self:stepLights(dt)
+		end)
+	elseif self.lightConnection then
+		self.lightConnection:Disconnect()
+		self.lightConnection = nil
+	end
+end
+
+-- Spins at least 5 turns and stops on `sector` (random spot inside it).
+function Wheel:SpinTo(sector: number, duration: number, onTick: (() -> ())?, onDone: (() -> ())?)
+	local width = self.width
+	local target = (sector - 1) * width + width / 2 + (math.random() - 0.5) * width * 0.6
+	local start = self.angle
+	local final = (-target) % 360
+	local delta = (final - start) % 360 + 360 * 5
+	local startClock = os.clock()
+	local lastSector = self:SectorAtPointer()
+	self.Spinning = true
+	local connection
+	connection = RunService.RenderStepped:Connect(function()
+		local t = math.clamp((os.clock() - startClock) / duration, 0, 1)
+		local eased = 1 - (1 - t) ^ 4
+		self:SetAngle(start + delta * eased)
+		local current = self:SectorAtPointer()
+		if current ~= lastSector then
+			lastSector = current
+			self.pointer.Rotation = -14
+			Widgets.tween(self.pointer, 0.12, { Rotation = 0 })
+			if onTick then
+				onTick()
+			end
+		end
+		if t >= 1 then
+			connection:Disconnect()
+			self.Spinning = false
+			if onDone then
+				onDone()
+			end
+		end
+	end)
+end
+
+return Wheel
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0021">
+				<Properties>
+					<string name="Name">WheelWindow</string>
+					<ProtectedString name="Source"><![CDATA[-- WheelWindow: the lucky wheel. One free spin every FreeSpinCooldown, extra
+-- spins bought with Robux, odds always displayed. The server draws the prize;
+-- the wheel only animates to it.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("BrainrotUI")
+local Config = require(shared:WaitForChild("UIConfig"))
+local Rules = require(shared:WaitForChild("Rules"))
+local Format = require(shared:WaitForChild("Format"))
+local Widgets = require(script.Parent:WaitForChild("Widgets"))
+local State = require(script.Parent:WaitForChild("State"))
+local Windows = require(script.Parent:WaitForChild("Windows"))
+local Notify = require(script.Parent:WaitForChild("Notify"))
+local Effects = require(script.Parent:WaitForChild("Effects"))
+local Purchases = require(script.Parent:WaitForChild("Purchases"))
+local Wheel = require(script.Parent:WaitForChild("Wheel"))
+
+local Theme = Widgets.Theme
+local Text = Config.Text
+local create = Widgets.create
+
+local WheelWindow = {}
+
+local WIDTH, HEIGHT = 800, 500
+local DIAMETER = 390
+local SPIN_TIME = 4.2
+
+local spinning = false
+
+-- Spins the player can use right now (bought + the free one when ready).
+function WheelWindow.availableSpins(): number
+	local free = if State.serverNow() >= State.number("FreeSpinAt") then 1 else 0
+	return State.number("Spins") + free
+end
+
+-- Replaced by build(); refreshes counters and buttons.
+function WheelWindow.refresh() end
+
+local function oddsPanel(parent: Instance, y: number, width: number)
+	local rewards = Config.Wheel.Rewards
+	local panel = Widgets.panel({
+		Name = "Odds",
+		Position = UDim2.fromOffset(0, y),
+		Size = UDim2.fromOffset(width, 34 + #rewards * 22),
+		BackgroundColor3 = Theme.Panel,
+		ZIndex = 33,
+		Parent = parent,
+	})
+	Widgets.text({ Text = Text.Odds, Font = "Title", TextSize = 18, Color = Theme.Muted, Stroke = 2, Position = UDim2.fromOffset(0, 6), Size = UDim2.new(1, 0, 0, 22), ZIndex = 34, Parent = panel })
+	local odds = Rules.wheelOdds()
+	for index, reward in rewards do
+		local rowY = 30 + (index - 1) * 22
+		Widgets.circle({
+			Name = "Dot",
+			Position = UDim2.fromOffset(14, rowY + 4),
+			Size = UDim2.fromOffset(14, 14),
+			BackgroundColor3 = reward.Color or Theme.Blue,
+			ZIndex = 34,
+			Parent = panel,
+		}, { Widgets.stroke(2) })
+		local info = Rules.describe(reward)
+		Widgets.text({ Text = info.Icon .. " " .. info.Long, TextSize = 16, Stroke = 2, XAlign = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(36, rowY), Size = UDim2.new(1, -100, 0, 22), ZIndex = 34, Parent = panel })
+		Widgets.text({ Text = Format.percent(odds[index]), Font = "Title", TextSize = 17, Stroke = 2, XAlign = Enum.TextXAlignment.Right, Position = UDim2.new(1, -74, 0, rowY), Size = UDim2.fromOffset(60, 22), ZIndex = 34, Parent = panel })
+	end
+end
+
+function WheelWindow.build(request: (string, any?) -> { [string]: any })
+	local window = Windows.create("Wheel", { Title = Text.WheelTitle, Width = WIDTH, Height = HEIGHT, Colors = Theme.Windows.Wheel })
+	local body = window.Body
+
+	local wheel = Wheel.new({ Parent = body, Position = UDim2.fromOffset(28, 26), Diameter = DIAMETER, Rewards = Config.Wheel.Rewards })
+
+	local column = Widgets.frame({ Name = "Side", Position = UDim2.fromOffset(460, 8), Size = UDim2.new(1, -460, 1, -8), ZIndex = 33, Parent = body })
+	local columnWidth = WIDTH - 40 - 460
+	local spinsLabel = Widgets.text({ Name = "Spins", Text = "", Font = "Title", TextSize = 34, Stroke = 3.5, Size = UDim2.new(1, 0, 0, 40), ZIndex = 33, Parent = column })
+	local freeLabel = Widgets.text({ Name = "Free", Text = "", TextSize = 19, Stroke = 2, Position = UDim2.fromOffset(0, 40), Size = UDim2.new(1, 0, 0, 26), ZIndex = 33, Parent = column })
+
+	local spinButton
+	spinButton = Widgets.button({
+		Name = "Spin",
+		Parent = column,
+		Position = UDim2.fromOffset(0, 72),
+		Size = UDim2.fromOffset(columnWidth, 68),
+		Color = Theme.Green,
+		Text = Text.SpinAction,
+		TextSize = 34,
+		Depth = 6,
+		ZIndex = 34,
+		OnClick = function()
+			if spinning then
+				return
+			end
+			spinning = true
+			WheelWindow.refresh()
+			local result = request("Spin")
+			if not result.ok or type(result.index) ~= "number" then
+				spinning = false
+				WheelWindow.refresh()
+				Notify.show(result.message or Text.GenericError, "error")
+				return
+			end
+			local reward = Config.Wheel.Rewards[result.index]
+			wheel:SpinTo(result.index, SPIN_TIME, function()
+				Widgets.playSound("Tick")
+			end, function()
+				spinning = false
+				WheelWindow.refresh()
+				local info = Rules.describe(reward)
+				if Windows.isOpen("Wheel") then
+					Effects.rewardPopup(info.Icon, Text.WheelWon, info.Long, reward.Color)
+				else
+					Notify.show(Text.WheelWon .. " " .. info.Long, "reward")
+				end
+			end)
+		end,
+	})
+	window.DefaultSelection = spinButton.Instance
+
+	-- Robux spin packs (hidden where paid random items are restricted)
+	local packs = Widgets.frame({
+		Name = "Packs",
+		Position = UDim2.fromOffset(0, 160),
+		Size = UDim2.new(1, 0, 0, 70),
+		ZIndex = 33,
+		Parent = column,
+	}, { Widgets.list(Enum.FillDirection.Horizontal, 12) })
+	local restrictedLabel = Widgets.text({ Name = "Restricted", Text = Text.RandomRestricted, TextSize = 17, Color = Theme.Muted, Stroke = 2, Position = UDim2.fromOffset(0, 160), Size = UDim2.new(1, 0, 0, 44), Wrapped = true, Visible = false, ZIndex = 33, Parent = column })
+	local packColors = { Theme.Blue, Theme.Purple }
+	for index, key in Config.Wheel.SpinProducts do
+		local product = Rules.ProductByKey[key]
+		if product then
+			local button = Widgets.button({
+				Name = key,
+				Parent = packs,
+				LayoutOrder = index,
+				Size = UDim2.fromOffset((columnWidth - 12) / 2, 66),
+				Color = packColors[index] or Theme.Blue,
+				Text = Text.SpinsProduct:format(product.Grant.Spins or 0),
+				TextSize = 20,
+				SubText = "R$ ?",
+				SubTextSize = 18,
+				ZIndex = 34,
+				OnClick = function()
+					Purchases.prompt("Product", key)
+				end,
+			})
+			Purchases.observePrice("Product", key, button.SetSubText)
+			if product.Tag then
+				local tag = create("Frame", {
+					Name = "Tag",
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = UDim2.new(0.5, 0, 0, -4),
+					Size = UDim2.fromOffset(118, 24),
+					BackgroundColor3 = Theme.Red,
+					Rotation = -4,
+					ZIndex = 40,
+					Parent = button.Instance,
+				}, { Widgets.round(), Widgets.stroke(2.5), Widgets.shading() })
+				Widgets.text({ Text = product.Tag, Font = "Title", TextSize = 15, Stroke = 2, ZIndex = 41, Position = UDim2.fromOffset(0, 1), Parent = tag })
+			end
+		end
+	end
+
+	oddsPanel(column, 240, columnWidth)
+
+	function WheelWindow.refresh()
+		local bought = State.number("Spins")
+		local freeReady = State.serverNow() >= State.number("FreeSpinAt")
+		spinsLabel.Text = Text.Spins:format(WheelWindow.availableSpins())
+		if freeReady then
+			freeLabel.Text = Text.FreeSpinReady
+			freeLabel.TextColor3 = Color3.fromRGB(140, 255, 120)
+		else
+			freeLabel.Text = Text.FreeSpinIn:format(Format.clock(State.number("FreeSpinAt") - State.serverNow()))
+			freeLabel.TextColor3 = Theme.Muted
+		end
+		spinButton.SetEnabled(not spinning and (freeReady or bought > 0))
+		local restricted = State.get("PaidRandomRestricted") == true
+		packs.Visible = not restricted
+		restrictedLabel.Visible = restricted
+	end
+
+	State.observe("Spins", WheelWindow.refresh)
+	State.observe("FreeSpinAt", WheelWindow.refresh)
+	State.observe("PaidRandomRestricted", WheelWindow.refresh)
+	table.insert(window.OnOpen, function()
+		wheel:SetLightsActive(true)
+		WheelWindow.refresh()
+	end)
+	table.insert(window.OnClose, function()
+		wheel:SetLightsActive(false)
+	end)
+end
+
+return WheelWindow
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0022">
+				<Properties>
+					<string name="Name">Widgets</string>
+					<ProtectedString name="Source"><![CDATA[-- Widgets: factory for the cartoon style of the interface (thick outlines,
+-- glossy chunky buttons, gradient text), plus sounds and screen scaling.
+-- Everything is drawn with frames, strokes and gradients: no image to upload.
+
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage:WaitForChild("BrainrotUI"):WaitForChild("UIConfig"))
+local Theme = Config.Theme
+
+local Widgets = {}
+Widgets.Theme = Theme
+
+local WHITE = Color3.new(1, 1, 1)
+local BLACK = Color3.new(0, 0, 0)
+
+local sounds: { [string]: Sound } = {}
+local hudScales: { UIScale } = {}
+local hudScale = 1
+
+-- Instance.new with properties and children; Parent is always set last.
+function Widgets.create(className: string, props: { [string]: any }?, children: { Instance }?): any
+	local instance = Instance.new(className)
+	if instance:IsA("GuiObject") then
+		instance.BorderSizePixel = 0
+	end
+	local parent = nil
+	if props then
+		for key, value in props do
+			if key == "Parent" then
+				parent = value
+			else
+				(instance :: any)[key] = value
+			end
+		end
+	end
+	if children then
+		for _, child in children do
+			child.Parent = instance
+		end
+	end
+	if parent then
+		instance.Parent = parent
+	end
+	return instance
+end
+
+local create = Widgets.create
+
+function Widgets.tween(instance: Instance, seconds: number, goal: { [string]: any }, style: Enum.EasingStyle?, direction: Enum.EasingDirection?, delay: number?): Tween
+	local info = TweenInfo.new(seconds, style or Enum.EasingStyle.Quad, direction or Enum.EasingDirection.Out, 0, false, delay or 0)
+	local tween = TweenService:Create(instance, info, goal)
+	tween:Play()
+	return tween
+end
+
+-- Colours -------------------------------------------------------------------
+
+function Widgets.shade(color: Color3, amount: number): Color3
+	return color:Lerp(BLACK, amount)
+end
+
+function Widgets.tint(color: Color3, amount: number): Color3
+	return color:Lerp(WHITE, amount)
+end
+
+function Widgets.sequence(colors: { Color3 }): ColorSequence
+	if #colors == 1 then
+		return ColorSequence.new(colors[1])
+	end
+	local keypoints = {}
+	for index, color in colors do
+		table.insert(keypoints, ColorSequenceKeypoint.new((index - 1) / (#colors - 1), color))
+	end
+	return ColorSequence.new(keypoints)
+end
+
+-- Decorators ----------------------------------------------------------------
+
+function Widgets.corner(radius: number | UDim | nil): UICorner
+	local value = if typeof(radius) == "UDim" then radius else UDim.new(0, (radius :: number?) or 12)
+	return create("UICorner", { CornerRadius = value })
+end
+
+function Widgets.round(): UICorner
+	return create("UICorner", { CornerRadius = UDim.new(0.5, 0) })
+end
+
+-- Outline around a frame.
+function Widgets.stroke(thickness: number?, color: Color3?, transparency: number?): UIStroke
+	return create("UIStroke", {
+		Thickness = thickness or 3,
+		Color = color or Theme.Outline,
+		Transparency = transparency or 0,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		LineJoinMode = Enum.LineJoinMode.Round,
+	})
+end
+
+-- Outline around the letters of a text.
+function Widgets.textStroke(thickness: number?, color: Color3?): UIStroke
+	return create("UIStroke", {
+		Thickness = thickness or 2.5,
+		Color = color or Theme.Outline,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual,
+		LineJoinMode = Enum.LineJoinMode.Round,
+	})
+end
+
+-- Gradient; rotation 90 = top to bottom.
+function Widgets.gradient(colors: { Color3 } | ColorSequence, rotation: number?): UIGradient
+	local sequence = if typeof(colors) == "ColorSequence" then colors else Widgets.sequence(colors :: { Color3 })
+	return create("UIGradient", { Color = sequence, Rotation = rotation or 90 })
+end
+
+-- Vertical shading that makes a flat colour look rounded.
+function Widgets.shading(): UIGradient
+	return Widgets.gradient({ WHITE, Color3.fromRGB(200, 200, 200) }, 90)
+end
+
+function Widgets.padding(top: number, right: number?, bottom: number?, left: number?): UIPadding
+	return create("UIPadding", {
+		PaddingTop = UDim.new(0, top),
+		PaddingRight = UDim.new(0, right or top),
+		PaddingBottom = UDim.new(0, bottom or top),
+		PaddingLeft = UDim.new(0, left or right or top),
+	})
+end
+
+function Widgets.list(direction: Enum.FillDirection?, padding: number?, horizontal: Enum.HorizontalAlignment?, vertical: Enum.VerticalAlignment?): UIListLayout
+	return create("UIListLayout", {
+		FillDirection = direction or Enum.FillDirection.Vertical,
+		Padding = UDim.new(0, padding or 8),
+		HorizontalAlignment = horizontal or Enum.HorizontalAlignment.Center,
+		VerticalAlignment = vertical or Enum.VerticalAlignment.Top,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	})
+end
+
+-- Basic elements ------------------------------------------------------------
+
+-- Uppercase that also handles French accents (the title font only has capitals
+-- for them: "é" would look lowercase next to capital letters).
+local ACCENTS = {
+	["à"] = "À", ["â"] = "Â", ["ä"] = "Ä", ["ç"] = "Ç", ["é"] = "É", ["è"] = "È", ["ê"] = "Ê", ["ë"] = "Ë",
+	["î"] = "Î", ["ï"] = "Ï", ["ô"] = "Ô", ["ö"] = "Ö", ["ù"] = "Ù", ["û"] = "Û", ["ü"] = "Ü", ["œ"] = "Œ",
+}
+
+function Widgets.upper(text: string): string
+	local upper = string.upper(text)
+	for lower, capital in ACCENTS do
+		upper = string.gsub(upper, lower, capital)
+	end
+	return upper
+end
+
+function Widgets.frame(props: { [string]: any }, children: { Instance }?): Frame
+	local merged = { BackgroundTransparency = 1 }
+	for key, value in props do
+		merged[key] = value
+	end
+	return create("Frame", merged, children)
+end
+
+-- Text label. Options: Text, Font ("Title" | "Body"), TextSize, Color, Stroke
+-- (thickness or false), StrokeColor, XAlign, YAlign, Wrapped, Scaled, plus
+-- any TextLabel property (Size, Position, AnchorPoint, Name, ZIndex...).
+local TEXT_OPTIONS = {
+	Font = true,
+	Color = true,
+	Stroke = true,
+	StrokeColor = true,
+	XAlign = true,
+	YAlign = true,
+	Wrapped = true,
+	Scaled = true,
+}
+
+function Widgets.text(options: { [string]: any }): TextLabel
+	local props: { [string]: any } = {
+		Name = "Text",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		FontFace = Font.fromEnum(if options.Font == "Title" then Theme.TitleFont else Theme.BodyFont),
+		TextColor3 = options.Color or Theme.Text,
+		TextSize = 24,
+		TextXAlignment = options.XAlign or Enum.TextXAlignment.Center,
+		TextYAlignment = options.YAlign or Enum.TextYAlignment.Center,
+		TextWrapped = options.Wrapped == true,
+		TextScaled = options.Scaled == true,
+	}
+	for key, value in options do
+		if not TEXT_OPTIONS[key] then
+			props[key] = value
+		end
+	end
+	if options.Font == "Title" and type(props.Text) == "string" then
+		props.Text = Widgets.upper(props.Text)
+	end
+	local label = create("TextLabel", props)
+	if options.Scaled then
+		create("UITextSizeConstraint", { MaxTextSize = options.TextSize or 24, MinTextSize = 8, Parent = label })
+	end
+	if options.Stroke ~= false then
+		Widgets.textStroke(options.Stroke or 2.5, options.StrokeColor).Parent = label
+	end
+	return label
+end
+
+function Widgets.circle(props: { [string]: any }, children: { Instance }?): Frame
+	local frame = create("Frame", props, children)
+	Widgets.round().Parent = frame
+	return frame
+end
+
+-- Dark rounded panel with an outline.
+function Widgets.panel(props: { [string]: any }, children: { Instance }?): Frame
+	local merged = { BackgroundColor3 = Theme.PanelLight }
+	for key, value in props do
+		if key ~= "Radius" then
+			merged[key] = value
+		end
+	end
+	local frame = create("Frame", merged, children)
+	Widgets.corner(props.Radius or 14).Parent = frame
+	Widgets.stroke(3).Parent = frame
+	return frame
+end
+
+-- Chunky button ---------------------------------------------------------------
+
+export type Button = {
+	Instance: TextButton,
+	Face: Frame,
+	Base: Frame,
+	Label: TextLabel,
+	SubLabel: TextLabel?,
+	SetText: (string) -> (),
+	SetSubText: (string) -> (),
+	SetColor: (Color3) -> (),
+	SetEnabled: (boolean) -> (),
+	IsEnabled: () -> boolean,
+}
+
+-- Options: Parent, Name, Size, Position, AnchorPoint, LayoutOrder, ZIndex, Color,
+-- Text, TextSize, Font, SubText, SubTextSize, Radius, Depth, OnClick.
+function Widgets.button(options: { [string]: any }): Button
+	local depth = options.Depth or 5
+	local radius = options.Radius or 12
+	local color: Color3 = options.Color or Theme.Green
+	local enabled = true
+
+	local button = create("TextButton", {
+		Name = options.Name or "Button",
+		Size = options.Size or UDim2.fromOffset(160, 56),
+		Position = options.Position or UDim2.new(),
+		AnchorPoint = options.AnchorPoint or Vector2.zero,
+		LayoutOrder = options.LayoutOrder or 0,
+		ZIndex = options.ZIndex or 1,
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		Parent = options.Parent,
+	})
+	local scale = create("UIScale", { Parent = button })
+	local base = create("Frame", {
+		Name = "Base",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Widgets.shade(color, 0.45),
+		Parent = button,
+	}, { Widgets.corner(radius), Widgets.stroke(options.StrokeThickness or 3) })
+	local face = create("Frame", {
+		Name = "Face",
+		Size = UDim2.new(1, 0, 1, -depth),
+		BackgroundColor3 = color,
+		Parent = base,
+	}, { Widgets.corner(radius), Widgets.shading() })
+	create("Frame", {
+		Name = "Shine",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 3),
+		Size = UDim2.new(1, -10, 0.4, 0),
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = 0.72,
+		Parent = face,
+	}, { Widgets.corner(math.max(radius - 3, 2)) })
+
+	local hasSub = options.SubText ~= nil
+	local label = Widgets.text({
+		Name = "Label",
+		Text = options.Text or "",
+		Font = options.Font or "Title",
+		TextSize = options.TextSize or 24,
+		Size = if hasSub then UDim2.new(1, -8, 0.56, 0) else UDim2.new(1, -8, 1, 0),
+		Position = UDim2.fromOffset(4, if hasSub then 2 else 0),
+		Parent = face,
+	})
+	local subLabel = nil
+	if hasSub then
+		subLabel = Widgets.text({
+			Name = "SubLabel",
+			Text = options.SubText,
+			TextSize = options.SubTextSize or 18,
+			Size = UDim2.new(1, -8, 0.4, 0),
+			Position = UDim2.new(0, 4, 0.56, 0),
+			Parent = face,
+		})
+	end
+
+	local hovering, pressed = false, false
+	local function refresh()
+		local target = if pressed then 0.95 elseif hovering and enabled then 1.06 else 1
+		Widgets.tween(scale, 0.12, { Scale = target })
+		face.Position = UDim2.fromOffset(0, if pressed then depth - 2 else 0)
+	end
+	local function applyColor()
+		local current = if enabled then color else Theme.Disabled
+		face.BackgroundColor3 = current
+		base.BackgroundColor3 = Widgets.shade(current, 0.45)
+		label.TextTransparency = if enabled then 0 else 0.2
+	end
+
+	local function isPointer(input: InputObject): boolean
+		return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
+	end
+	button.MouseEnter:Connect(function()
+		hovering = true
+		refresh()
+	end)
+	button.MouseLeave:Connect(function()
+		hovering = false
+		pressed = false
+		refresh()
+	end)
+	button.SelectionGained:Connect(function()
+		hovering = true
+		refresh()
+	end)
+	button.SelectionLost:Connect(function()
+		hovering = false
+		refresh()
+	end)
+	button.InputBegan:Connect(function(input)
+		if isPointer(input) then
+			pressed = true
+			refresh()
+		end
+	end)
+	button.InputEnded:Connect(function(input)
+		if isPointer(input) then
+			pressed = false
+			if input.UserInputType == Enum.UserInputType.Touch then
+				hovering = false
+			end
+			refresh()
+		end
+	end)
+	button.Activated:Connect(function()
+		if not enabled then
+			return
+		end
+		Widgets.playSound("Click")
+		if options.OnClick then
+			task.spawn(options.OnClick)
+		end
+	end)
+
+	local object = {} :: Button
+	object.Instance = button
+	object.Face = face
+	object.Base = base
+	object.Label = label
+	object.SubLabel = subLabel
+	local titleFont = (options.Font or "Title") == "Title"
+	function object.SetText(text: string)
+		label.Text = if titleFont then Widgets.upper(text) else text
+	end
+	function object.SetSubText(text: string)
+		if subLabel then
+			subLabel.Text = text
+		end
+	end
+	function object.SetColor(newColor: Color3)
+		color = newColor
+		applyColor()
+	end
+	function object.SetEnabled(value: boolean)
+		enabled = value
+		applyColor()
+		refresh()
+	end
+	function object.IsEnabled(): boolean
+		return enabled
+	end
+	return object
+end
+
+-- Red notification dot in the top-right corner of a button.
+export type Badge = { Instance: Frame, Set: (string?) -> () }
+
+function Widgets.badge(parent: GuiObject): Badge
+	local dot = Widgets.circle({
+		Name = "Badge",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(1, -6, 0, 6),
+		Size = UDim2.fromOffset(30, 30),
+		BackgroundColor3 = Theme.Red,
+		Visible = false,
+		ZIndex = 5,
+		Parent = parent,
+	}, { Widgets.stroke(3), Widgets.shading() })
+	local label = Widgets.text({ Text = "!", Font = "Title", TextSize = 20, ZIndex = 6, Position = UDim2.fromOffset(0, 1), Parent = dot })
+	local scale = create("UIScale", { Parent = dot })
+	local object = {} :: Badge
+	object.Instance = dot
+	function object.Set(text: string?)
+		local show = text ~= nil and text ~= ""
+		if show then
+			label.Text = text :: string
+		end
+		if show and not dot.Visible then
+			scale.Scale = 0.3
+			Widgets.tween(scale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+		end
+		dot.Visible = show
+	end
+	return object
+end
+
+-- Progress bar with centred text.
+export type ProgressBar = { Instance: Frame, Set: (number, string?) -> () }
+
+function Widgets.progressBar(props: { [string]: any }): ProgressBar
+	local colors = props.Colors or { Theme.Purple, Theme.Pink }
+	local bar = create("Frame", {
+		Name = props.Name or "ProgressBar",
+		Size = props.Size,
+		Position = props.Position or UDim2.new(),
+		AnchorPoint = props.AnchorPoint or Vector2.zero,
+		BackgroundColor3 = BLACK,
+		BackgroundTransparency = 0.45,
+		Parent = props.Parent,
+	}, { Widgets.round(), Widgets.stroke(3) })
+	local fill = create("Frame", {
+		Name = "Fill",
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = WHITE,
+		Parent = bar,
+	}, { Widgets.round(), Widgets.gradient(colors, 0) })
+	local label = Widgets.text({ Text = "", Font = "Title", TextSize = props.TextSize or 20, ZIndex = 3, Position = UDim2.fromOffset(0, 1), Parent = bar })
+	local object = {} :: ProgressBar
+	object.Instance = bar
+	function object.Set(ratio: number, text: string?)
+		local clamped = math.clamp(ratio, 0, 1)
+		fill.Visible = clamped > 0
+		Widgets.tween(fill, 0.35, { Size = UDim2.fromScale(math.max(clamped, 0.06), 1) })
+		if text then
+			label.Text = text
+		end
+	end
+	return object
+end
+
+-- Sounds ----------------------------------------------------------------------
+
+function Widgets.playSound(name: string)
+	local sound = sounds[name]
+	if sound then
+		SoundService:PlayLocalSound(sound)
+	end
+end
+
+local function loadSounds()
+	local folder = SoundService:FindFirstChild("BrainrotUISounds")
+	if folder then
+		folder:Destroy()
+	end
+	folder = create("Folder", { Name = "BrainrotUISounds", Parent = SoundService })
+	for name, id in Config.Sounds.Ids do
+		if id ~= "" then
+			sounds[name] = create("Sound", { Name = name, SoundId = id, Volume = Config.Sounds.Volume, Parent = folder })
+		end
+	end
+end
+
+-- Screen scaling ----------------------------------------------------------------
+
+-- The interface is designed at 1280 x 720; every HUD cluster gets a UIScale
+-- that follows the real screen size (phones shrink it, big screens grow it).
+local function computeHudScale(size: Vector2): number
+	if size.X <= 0 or size.Y <= 0 then
+		return 1
+	end
+	return math.clamp(math.min(size.X / 1280, size.Y / 720), 0.55, 1.35)
+end
+
+function Widgets.getHudScale(): number
+	return hudScale
+end
+
+function Widgets.attachHudScale(guiObject: GuiObject): UIScale
+	local scale = create("UIScale", { Name = "HudScale", Scale = hudScale, Parent = guiObject })
+	table.insert(hudScales, scale)
+	return scale
+end
+
+function Widgets.init(screenGui: ScreenGui)
+	local function update()
+		local size = screenGui.AbsoluteSize
+		if size.X <= 0 then
+			local camera = workspace.CurrentCamera
+			size = if camera then camera.ViewportSize else Vector2.new(1280, 720)
+		end
+		hudScale = computeHudScale(size)
+		for _, scale in hudScales do
+			scale.Scale = hudScale
+		end
+	end
+	screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
+	update()
+	loadSounds()
+end
+
+return Widgets
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX0023">
+				<Properties>
+					<string name="Name">Windows</string>
+					<ProtectedString name="Source"><![CDATA[-- Windows: the menus (Shop, Rebirth, Index, Wheel). One open at a time.
+-- Opening zooms the HUD out, dims the screen and pops the window in;
+-- closing does the reverse. Close with the X, a click outside, or gamepad B.
+
+local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
+local UserInputService = game:GetService("UserInputService")
+
+local Widgets = require(script.Parent:WaitForChild("Widgets"))
+
+local Theme = Widgets.Theme
+local create = Widgets.create
+
+local Windows = {}
+
+export type Window = {
+	Name: string,
+	Root: Frame,
+	Body: Frame,
+	Scale: UIScale,
+	Width: number,
+	Height: number,
+	DefaultSelection: GuiObject?,
+	OnOpen: { () -> () },
+	OnClose: { () -> () },
+}
+
+local CLOSE_ACTION = "BrainrotUICloseWindow"
+local STAGGER = 0.035
+
+local screenGui: ScreenGui? = nil
+local dim: TextButton? = nil
+local holder: Frame? = nil
+local windows: { [string]: Window } = {}
+local hudGroups: { UIScale } = {}
+local current: Window? = nil
+local busy = false
+
+-- Largest scale that keeps the window on screen, capped relative to the HUD.
+local function fitScale(window: Window): number
+	local gui = screenGui :: ScreenGui
+	local size = gui.AbsoluteSize
+	if size.X <= 0 then
+		return 1
+	end
+	local fit = math.min(
+		(size.X - 30) / window.Width,
+		(size.Y - 50) / (window.Height + 36),
+		1.1 * math.max(Widgets.getHudScale(), 0.8)
+	)
+	return math.max(fit, 0.35)
+end
+
+local function hideHud()
+	for index, scale in hudGroups do
+		Widgets.tween(scale, 0.16, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In, (index - 1) * STAGGER)
+	end
+end
+
+local function showHud()
+	for index, scale in hudGroups do
+		Widgets.tween(scale, 0.24, { Scale = 1 }, Enum.EasingStyle.Back, Enum.EasingDirection.Out, (index - 1) * STAGGER)
+	end
+end
+
+local function bindClose()
+	ContextActionService:BindActionAtPriority(CLOSE_ACTION, function(_, state)
+		if state == Enum.UserInputState.Begin then
+			Windows.close()
+		end
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.ButtonB)
+end
+
+local function usingGamepad(): boolean
+	local last = UserInputService:GetLastInputType()
+	return last == Enum.UserInputType.Gamepad1
+		or last == Enum.UserInputType.Gamepad2
+		or last == Enum.UserInputType.Gamepad3
+		or last == Enum.UserInputType.Gamepad4
+end
+
+-- A HUD group that zooms out while a window is open (gets its own UIScale).
+function Windows.registerHud(guiObject: GuiObject)
+	local scale = create("UIScale", { Name = "HideScale", Parent = guiObject })
+	table.insert(hudGroups, scale)
+end
+
+-- Builds the frame of a window. Options: Title, Width, Height, Colors.
+function Windows.create(name: string, options: { [string]: any }): Window
+	local width, height = options.Width, options.Height
+	local root = create("Frame", {
+		Name = name,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 16),
+		Size = UDim2.fromOffset(width, height),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		Active = true,
+		Visible = false,
+		ZIndex = 30,
+		Parent = holder,
+	}, {
+		Widgets.corner(20),
+		Widgets.stroke(4),
+		Widgets.gradient({ Theme.PanelLight, Theme.Panel }, 90),
+	})
+	local scale = create("UIScale", { Parent = root })
+
+	-- title ribbon across the top edge
+	local banner = create("Frame", {
+		Name = "Banner",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0, 0),
+		Size = UDim2.fromOffset(math.min(360, width - 150), 60),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		ZIndex = 32,
+		Parent = root,
+	}, { Widgets.corner(16), Widgets.stroke(4), Widgets.gradient(options.Colors, 90) })
+	create("Frame", {
+		Name = "Shine",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 4),
+		Size = UDim2.new(1, -14, 0.4, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.7,
+		ZIndex = 32,
+		Parent = banner,
+	}, { Widgets.corner(12) })
+	Widgets.text({
+		Name = "Title",
+		Text = options.Title,
+		Font = "Title",
+		TextSize = 38,
+		Stroke = 4,
+		Position = UDim2.fromOffset(0, 4),
+		ZIndex = 33,
+		Parent = banner,
+	})
+
+	local body = Widgets.frame({
+		Name = "Body",
+		Position = UDim2.fromOffset(20, 42),
+		Size = UDim2.new(1, -40, 1, -58),
+		ZIndex = 31,
+		Parent = root,
+	})
+
+	local window: Window = {
+		Name = name,
+		Root = root,
+		Body = body,
+		Scale = scale,
+		Width = width,
+		Height = height,
+		DefaultSelection = nil,
+		OnOpen = {},
+		OnClose = {},
+	}
+
+	Widgets.button({
+		Name = "Close",
+		Parent = root,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(1, -10, 0, 10),
+		Size = UDim2.fromOffset(54, 54),
+		Color = Theme.Red,
+		Text = "X",
+		TextSize = 30,
+		Radius = 14,
+		ZIndex = 40,
+		OnClick = function()
+			Windows.close()
+		end,
+	})
+
+	windows[name] = window
+	return window
+end
+
+function Windows.isOpen(name: string): boolean
+	local window = current
+	return window ~= nil and window.Name == name
+end
+
+function Windows.open(name: string)
+	local window = windows[name]
+	if not window or busy or current == window then
+		return
+	end
+	local previous = current
+	if previous then
+		-- switching directly from another window
+		previous.Root.Visible = false
+		for _, fn in previous.OnClose do
+			task.spawn(fn)
+		end
+	else
+		hideHud()
+	end
+	busy = true
+	current = window
+	local shade = dim :: TextButton
+	shade.Visible = true
+	Widgets.tween(shade, 0.2, { BackgroundTransparency = 0.45 })
+	local fit = fitScale(window)
+	window.Scale.Scale = fit * 0.6
+	window.Root.Visible = true
+	Widgets.playSound("Open")
+	for _, fn in window.OnOpen do
+		task.spawn(fn)
+	end
+	Widgets.tween(window.Scale, 0.3, { Scale = fit }, Enum.EasingStyle.Back).Completed:Once(function()
+		busy = false
+	end)
+	bindClose()
+	if usingGamepad() and window.DefaultSelection then
+		GuiService.SelectedObject = window.DefaultSelection
+	end
+end
+
+function Windows.close()
+	local window = current
+	if not window or busy then
+		return
+	end
+	busy = true
+	current = nil
+	ContextActionService:UnbindAction(CLOSE_ACTION)
+	if GuiService.SelectedObject and GuiService.SelectedObject:IsDescendantOf(window.Root) then
+		GuiService.SelectedObject = nil
+	end
+	local shade = dim :: TextButton
+	Widgets.tween(shade, 0.2, { BackgroundTransparency = 1 })
+	Widgets.tween(window.Scale, 0.2, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In).Completed:Once(function()
+		window.Root.Visible = false
+		shade.Visible = false
+		for _, fn in window.OnClose do
+			task.spawn(fn)
+		end
+		showHud()
+		busy = false
+	end)
+end
+
+function Windows.toggle(name: string)
+	if Windows.isOpen(name) then
+		Windows.close()
+	else
+		Windows.open(name)
+	end
+end
+
+function Windows.init(gui: ScreenGui)
+	screenGui = gui
+	local shade = create("TextButton", {
+		Name = "Dim",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		Visible = false,
+		ZIndex = 20,
+		Parent = gui,
+	})
+	shade.Activated:Connect(function()
+		Windows.close()
+	end)
+	dim = shade
+	holder = Widgets.frame({ Name = "Windows", Size = UDim2.fromScale(1, 1), ZIndex = 30, Parent = gui })
+	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		local window = current
+		if window and not busy then
+			window.Scale.Scale = fitScale(window)
+		end
+	end)
+end
+
+return Windows
+]]></ProtectedString>
+				</Properties>
+			</Item>
+		</Item>
+	</Item>
+</roblox>

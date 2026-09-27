@@ -40,26 +40,32 @@ fenêtres avec B.
 
 ## Installer dans Roblox Studio
 
+L'installation se fait en deux fichiers. La barre de commande de Studio n'accepte pas un
+script de 150 Ko : elle n'en garde que la fin, ce qui donne l'erreur
+`Expected <eof>, got 'end'`.
+
 1. Ouvre ta place (par exemple celle de la zone 6 ou de l'île pirate) en **mode édition**.
-2. Ouvre la barre de commande (**Affichage → Barre de commande**), colle **tout** le contenu de
-   `BrainrotUI_Install.lua`, puis appuie sur Entrée.
-3. **Enregistre la place**, puis lance **Play**.
+2. **Insère le modèle** : dans l'Explorateur, clic droit sur **Workspace → Insérer depuis un
+   fichier…**, puis choisis `BrainrotUI.rbxmx`. Tu peux aussi glisser le fichier dans la
+   fenêtre 3D. Un dossier `BrainrotUI_Install` apparaît dans le Workspace ; ses scripts n'y
+   tournent pas.
+3. **Range-le** : ouvre la barre de commande (**Affichage → Barre de commande**), colle le
+   contenu de `BrainrotUI_Install.lua` (une soixantaine de lignes), puis appuie sur Entrée.
+4. **Enregistre la place**, puis lance **Play**.
 
 La Sortie doit afficher :
 
 ```
 ----- Installation de BrainrotUI -----
-✅ UIConfig installée dans ReplicatedStorage.BrainrotUI
-✅ Script serveur installé : ServerScriptService.BrainrotUIServer (4 modules)
-✅ Interface installée : StarterPlayerScripts.BrainrotUIClient (13 modules)
+✅ ReplicatedStorage.BrainrotUI, ServerScriptService.BrainrotUIServer, StarterPlayerScripts.BrainrotUIClient
 ✅ BrainrotUI prête ! Enregistre la place, puis lance Play.
 ```
 
-L'installeur peut être relancé sans risque : il remplace les scripts et **garde ta config**,
-y compris tes IDs de produits. Pour repartir de la config d'origine, mets
-`OVERWRITE_CONFIG = true` en haut du fichier.
+Pour une mise à jour, refais les étapes 2 et 3 : les scripts sont remplacés et **ta config
+est gardée**, y compris tes IDs de produits. Pour repartir de la config d'origine, mets
+`OVERWRITE_CONFIG = true` en haut de `BrainrotUI_Install.lua`.
 
-Si le pack d'origine est dans la même place, l'installeur le signale. Désactive alors
+Si le pack d'origine est dans la même place, la commande le signale. Désactive alors
 `StarterGui.GUI` et ses scripts serveur (`PurchaseHandler`, `ReceiptHandler`, `leaderstats`,
 etc.), sinon deux interfaces et deux `ProcessReceipt` tournent en même temps.
 
@@ -113,7 +119,7 @@ l'attribut `Kind` (`Coins` ou `Power`) et, pour un orbe, `Rarity`.
 
 Vérifié ici :
 
-- tous les scripts compilent (`luau-compile`), y compris l'installeur ;
+- tous les scripts compilent (`luau-compile`), y compris la commande d'installation ;
 - le contrôle de types avec les définitions de l'API Roblox (`luau-lsp`) ne signale rien ;
 - **le vrai code, serveur et client ensemble, tourne dans un simulateur de l'API Roblox**
   (`tools/`). Chaque propriété, chaque énumération et chaque méthode utilisée y est vérifiée
@@ -129,13 +135,14 @@ Vérifié ici :
   - sauvegarde et verrou libérés à l'arrêt ;
   - profil verrouillé par un autre serveur jamais écrasé ;
 - la roue peint la bonne couleur sous chaque angle : 300 positions × 720 directions, zéro erreur ;
-- l'installeur, lancé deux fois, ne crée aucun doublon et garde la config modifiée ;
+- l'installation (modèle puis commande), faite deux fois, ne crée aucun doublon, réactive le
+  script serveur et garde la config modifiée ;
 - les aperçus ci-dessus sont rendus à partir de l'interface réellement construite par le code.
 
 Studio n'était pas disponible ici. **Rien n'a donc encore tourné dans Roblox.** À vérifier
 au premier Play :
 
-1. les lignes ✅ de l'installeur, sans ⚠️ ;
+1. les lignes ✅ de l'installation, sans ⚠️ ;
 2. les objets de test autour du point d'apparition, puis le compteur qui monte et
    « Nouveau brainrot » à la première orbe ;
 3. l'ouverture et la fermeture de chaque fenêtre, et un tour de roue ;
@@ -147,11 +154,12 @@ au premier Play :
 
 | Fichier | Rôle |
 |---|---|
-| `BrainrotUI_Install.lua` | **l'installeur à coller dans la barre de commande** (généré) |
+| `BrainrotUI.rbxmx` | **le modèle à insérer dans Studio** : tous les scripts (généré) |
+| `BrainrotUI_Install.lua` | **la commande courte** qui range le modèle (généré) |
 | `src/ReplicatedStorage/BrainrotUI/` | `UIConfig` (réglages), `Rules` (formules communes), `Format` (nombres) |
 | `src/ServerScriptService/BrainrotUIServer/` | démarrage et requêtes (`init.server.lua`), `PlayerData` (sauvegarde), `Economy` (règles), `Store` (Robux), `Pickups` (objets) |
 | `src/StarterPlayerScripts/BrainrotUIClient/` | construction de l'interface (`init.client.lua`), `Widgets` (style), `Hud`, les 4 fenêtres, `Wheel`, `Notify`, `Effects`, `Purchases`, `State`, `PickupFx` |
-| `build_installer.py` | régénère l'installeur à partir de `src/` |
+| `build_installer.py` | régénère le modèle et la commande à partir de `src/` |
 | `tools/` | simulateur de l'API Roblox, partie scriptée avec ses contrôles, rendu des aperçus |
 | `BrainrotUI_Previews.png`, `previews/` | aperçus |
 

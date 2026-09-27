@@ -122,9 +122,9 @@ def main():
             print(line[:300])
     ok = code == 0 and re.search(r"CHECKS passed=\d+ failed=0", log) is not None
 
-    installer = open(os.path.join(UI, "BrainrotUI_Install.lua"), encoding="utf-8").read()
+    command = open(os.path.join(UI, "BrainrotUI_Install.lua"), encoding="utf-8").read()
     installer_test = open(os.path.join(HERE, "installer_test.luau"), encoding="utf-8").read()
-    code2, log2 = run(luau, api + [mock, "INSTALLER = " + lua_string(installer), installer_test], "installer.luau")
+    code2, log2 = run(luau, api + [sources, mock, "COMMAND = " + lua_string(command), installer_test], "installer.luau")
     print("installer:", "OK" if "INSTALLER OK" in log2 else log2[-2000:])
     ok = ok and code2 == 0 and "INSTALLER OK" in log2
 
