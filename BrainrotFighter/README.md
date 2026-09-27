@@ -80,6 +80,8 @@ les bouts de falaise.
 
 ## Le plan (Z1_Layout)
 
+![Vue de dessus](docs/z1_layout_top.jpg)
+
 ![Vues de la zone](docs/z1_layout_views.jpg)
 
 - **Entrée (-Y)** : spawn en (0, -340), rayon 40 laissé libre ; socle de la Star
